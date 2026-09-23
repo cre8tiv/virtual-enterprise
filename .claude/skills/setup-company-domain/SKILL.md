@@ -68,7 +68,14 @@ Done when the registration status is `succeeded`.
 1. Confirm the domain appears in the account's registrations and note its expiry date.
 2. Confirm a DNS zone exists for the domain. If none exists, create it (tell the operator first). Note the zone ID.
 3. Update `local/registry.md`: **Company name**, **Domain**, **Cloudflare account ID**, **Cloudflare zone ID**, and the domain's expiry in the Renewal column. Replace `<domain>` in existing registry values with the domain.
-4. Write `apps/storefront/.env` (gitignored): if it doesn't exist, copy `apps/storefront/.env.example`. Set `COMPANY_NAME=<company name>` and `SITE_URL=https://www.<domain>`, leaving other lines untouched.
+4. Write derived config into each component's gitignored `.env`. The committed `.env.example` files are public templates and keep their placeholders. For each file below: if `.env` doesn't exist, copy it from `.env.example`; then set only the listed keys, leaving other lines untouched:
+
+   | File | Keys |
+   |---|---|
+   | `apps/storefront/.env` | `COMPANY_NAME=<company name>`, `SITE_URL=https://www.<domain>` |
+   | `infra/compose/vault/.env` | `APP_FULL_BASE_URL=https://vault.<domain>` |
+
+   If `infra/compose/vault/.env` already has a different `APP_FULL_BASE_URL` and the vault has been started (`docker compose ps` in that folder shows containers), stop and ask the operator: the vault URL is permanent once users enroll.
 5. Mark the chosen name and domain as `registered` in `local/names.md`.
 
 Done when every value above is written and matches the Cloudflare account.

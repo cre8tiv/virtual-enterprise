@@ -16,7 +16,7 @@ Ordered, repeatable steps to stand up an instance of the virtual enterprise desc
 **Break-glass rule:** the Cloudflare account is owned by an operator mailbox **outside** `<domain>`. Mail to `<domain>` flows through Cloudflare, so a Cloudflare lockout would otherwise block its own recovery.
 
 ---
-### Agent tooling (MCP servers)
+## Agent tooling (MCP servers)
 
 The repo's `.mcp.json` defines project MCP servers for agent-assisted setup. It contains **no secrets**: servers authenticate via OAuth on first use, or read tokens from environment variables. Claude Code asks each user to approve project servers on first launch.
 
@@ -74,7 +74,7 @@ The repo's `.mcp.json` defines project MCP servers for agent-assisted setup. It 
 - [ ] **[script]** Synthesize domain candidates; quick-filter with the `godaddy` MCP; confirm availability and at-cost price with Cloudflare Registrar **check** (authoritative: the domain must be registrable at Cloudflare).
 - [ ] **[script]** After explicit operator confirmation (registrations are non-refundable): confirm the account doesn't already hold the domain, then register via Cloudflare Registrar with **auto-renew on** (the API defaults to off); WHOIS privacy (redaction) is the default.
 - [ ] **[script]** Verify the registration and the DNS zone (create the zone if missing).
-- [ ] **[script]** Write derived config: `apps/storefront/.env` from `.env.example` (`COMPANY_NAME`, `SITE_URL=https://www.<domain>`); replace `<domain>` placeholders in `local/registry.md`.
+- [ ] **[script]** Write derived config into gitignored `.env` files (created from each `.env.example`, which stays a generic template): `apps/storefront/.env` (`COMPANY_NAME`, `SITE_URL=https://www.<domain>`), `infra/compose/vault/.env` (`APP_FULL_BASE_URL=https://vault.<domain>`). Replace `<domain>` placeholders in `local/registry.md`.
 - **Record:** company name, `<domain>`, Cloudflare account ID, zone ID, domain expiry.
 
 ## Phase 2: Operator Vault (Passbolt CE)
@@ -84,7 +84,7 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 **The vault URL is permanent:** `https://vault.<domain>` from day one. Passbolt ties each user's browser extension to the server URL, so changing it later means reconfiguring every user.
 
 - [ ] **[manual]** Point `vault.<domain>` at the local machine in the hosts file (`127.0.0.1  vault.<domain>`; Windows: `C:\Windows\System32\drivers\etc\hosts`, macOS/Linux: `/etc/hosts`). Requires admin rights. No public DNS record yet.
-- [ ] **[script]** In `infra/compose/vault/`: copy `.env.example` to `.env`; set `APP_FULL_BASE_URL=https://vault.<domain>`; generate `PASSBOLT_DB_PASSWORD` (keep it in your personal password manager until the vault is up, then move it in).
+- [ ] **[script]** In `infra/compose/vault/.env` (created in Phase 1 with `APP_FULL_BASE_URL`): generate `PASSBOLT_DB_PASSWORD` if empty (keep it in your personal password manager until the vault is up, then move it in).
 - [ ] **[script]** `docker compose up -d`, then run the healthcheck:
   `docker compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt healthcheck' www-data`
   Expect warnings about the self-signed certificate and missing SMTP only.
