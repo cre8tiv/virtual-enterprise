@@ -130,7 +130,7 @@ A real domain owned by the operator is required: IdP federation and SSO routing 
 - **Operator vault:** self-hosted **Passbolt Community Edition** (`infra/compose/vault/`), running from Phase 2, the first step after the domain exists. End-to-end encrypted (OpenPGP), team sharing, folders, TOTP MFA, API + `go-passbolt-cli`.
 - **Permanent URL:** `https://vault.<domain>` from day one. It starts on the operator's machine (hosts-file entry, self-signed certificate) and moves to another host by backup/restore without changing the URL, so no user re-enrolls. If published, it sits behind Cloudflare Tunnel + Cloudflare Access.
 - **Break-glass:** the admin recovery kit + passphrase, server GPG keys, and DB backups are stored **outside Passbolt** (offline / personal password manager). Credentials created before the vault exists (Cloudflare) live in the operator's personal password manager until Phase 2.
-- **Automation:** a dedicated Passbolt user (`automation@svc.<domain>`) with its own key, shared on every folder except `Break-glass`. Scripts access credentials through a small **vault adapter** (`scripts/vault`) wrapping `go-passbolt-cli`, so the provider can change without touching provisioning scripts. Compose `.env` files are rendered from the vault and gitignored.
+- **Automation:** a dedicated Passbolt user (`automation@svc.<domain>`) that creates the working folders and makes the admin an Owner; it never has access to `Break-glass`. Its private key and passphrase live in `~/.config/virtual-enterprise/` (outside the repo, user-only permissions) so agents and scripts can run unattended; that exposure is bounded by its folder access. Scripts reach credentials only through the **vault adapter** (`scripts/vault/vault.mjs`, Node so it runs on every platform), which wraps `go-passbolt-cli` with idempotent `ensure-folder` / `upsert` / `get`, so the provider can change without touching callers. Compose `.env` files are written with `scripts/env/set-env.mjs` and gitignored.
 - **CE limits:** no SSO, LDAP sync, or admin-assisted account recovery (Pro features). Not depending on the environment's own IdPs is deliberate for the vault that holds their admin credentials. Recovery is email-based, so SMTP is configured in Phase 4.
 - **Scope:** the operator vault is not a system in the fictional company. It is never exposed to the SUT.
 
@@ -160,6 +160,8 @@ infra/
     vault/            operator vault (Passbolt CE + MariaDB, backup/restore scripts)
 scripts/              provisioning scripts, vault adapter
   prereqs/            operator-machine prerequisite check/install (prereqs.ps1, prereqs.sh)
+  vault/              vault adapter (vault.mjs) over go-passbolt-cli
+  env/                idempotent .env writer (set-env.mjs)
 local/                gitignored: registry, operator notes
 .mcp.json             project MCP servers for agent-assisted setup (no secrets)
 .claude/skills/       agent skills that run SETUP.md phases (e.g. setup-prerequisites)
@@ -262,6 +264,8 @@ Entries are append-only; later entries supersede earlier ones.
 | 2026-09-23 | Phase 0 automated: cross-platform prereq scripts (check-only by default, `--install` opt-in) + `setup-prerequisites` skill | Repeatable operator onboarding; first step toward per-phase setup skills. Skill is user-invoked only because it installs software. |
 | 2026-09-23 | Phase 1 automated via `setup-company-domain` skill; domains registered through the Cloudflare Registrar API (via Cloudflare MCP); `godaddy` MCP added for public availability/suggestions | Registrar API (beta, April 2026) supports search/check/register. GoDaddy's MCP is public and read-only: good for ideation, but Cloudflare's check is authoritative because registration happens there. Cloudflare account setup (payment, registrant contact, agreement) moves to Phase 0. |
 | 2026-09-23 | All setup scripts and skills are idempotent (read state → skip done → act → verify → record) | Phases are re-runnable after interruption without duplicates; essential where actions cost money or are irreversible (domain registration). |
+| 2026-09-23 | Phase 2 automated via `setup-vault` skill; shared helpers in Node (`vault.mjs`, `set-env.mjs`) | Node is already a prerequisite on every platform, so one implementation instead of PowerShell + bash. Browser-only steps (registration, recovery kit, MFA) and the hosts file stay manual. |
+| 2026-09-23 | Vault publishes HTTPS only; local port conflicts are solved with an alternate loopback address (e.g. `127.0.0.2`), not an alternate port | The hosts file maps names to IPs, not ports; a port would become part of the permanent Passbolt URL and break enrollment when the vault moves. |
 | 2026-09-23 | Remove Vaultwarden from the stack | Avoid two password managers; the operator vault must not double as a company system exposed to the SUT. |
 
 ## 10. Open Questions & Risks

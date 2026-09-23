@@ -79,12 +79,15 @@ The repo's `.mcp.json` defines project MCP servers for agent-assisted setup. It 
 
 ## Phase 2: Operator Vault (Passbolt CE)
 
+**Agent-assisted:** run the `/setup-vault` skill; it performs the [script] steps, verifies each [manual] step, and resumes where a previous run stopped.
+
 Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts on the operator's machine and can later move to any Docker host by backup/restore.
 
 **The vault URL is permanent:** `https://vault.<domain>` from day one. Passbolt ties each user's browser extension to the server URL, so changing it later means reconfiguring every user.
 
-- [ ] **[manual]** Point `vault.<domain>` at the local machine in the hosts file (`127.0.0.1  vault.<domain>`; Windows: `C:\Windows\System32\drivers\etc\hosts`, macOS/Linux: `/etc/hosts`). Requires admin rights. No public DNS record yet.
-- [ ] **[script]** In `infra/compose/vault/.env` (created in Phase 1 with `APP_FULL_BASE_URL`): generate `PASSBOLT_DB_PASSWORD` if empty (keep it in your personal password manager until the vault is up, then move it in).
+- [ ] **[script]** Choose the bind address: `127.0.0.1` if port 443 is free there, otherwise another loopback address such as `127.0.0.2` (`BIND_ADDR` in `infra/compose/vault/.env`; macOS needs `sudo ifconfig lo0 alias 127.0.0.2`). The hosts file can't carry a port, so a different address keeps the URL port-less and portable. Only port 443 is published; port 80 isn't needed.
+- [ ] **[manual]** Point `vault.<domain>` at that address in the hosts file (`<BIND_ADDR>  vault.<domain>`; Windows: `C:\Windows\System32\drivers\etc\hosts`, macOS/Linux: `/etc/hosts`). Requires admin rights. No public DNS record yet.
+- [ ] **[script]** Generate `PASSBOLT_DB_PASSWORD` in `infra/compose/vault/.env` only if empty (`scripts/env/set-env.mjs ... --if-empty`; changing it after initialization breaks the stack).
 - [ ] **[script]** `docker compose up -d`, then run the healthcheck:
   `docker compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt healthcheck' www-data`
   Expect warnings about the self-signed certificate and missing SMTP only.
@@ -93,17 +96,16 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 - [ ] **[manual]** Open the registration URL; accept the self-signed certificate; install the Passbolt browser extension; set a strong passphrase.
 - [ ] **[manual]** Download the **recovery kit** and store it, with the passphrase, **outside Passbolt** (offline and/or personal password manager). This is the vault's break-glass.
 - [ ] **[manual]** Enable TOTP MFA (Administration → Multi Factor Authentication) and enroll the admin.
-- [ ] **[manual]** Create folders:
-  - `Break-glass`: Cloudflare, M365 global admin, OCI root
+- [ ] **[script]** Register the automation user `automation@svc.<domain>` (role `user`). **[manual]** Complete its registration in a separate browser profile; export its private key to `~/.config/virtual-enterprise/automation.asc` and write its passphrase to `~/.config/virtual-enterprise/automation.passphrase` (user-only permissions).
+- [ ] **[script]** Configure `go-passbolt-cli` with a project config (`passbolt configure --config ~/.config/virtual-enterprise/passbolt.toml --serverAddress https://vault.<domain> --userPrivateKeyFile ... --tlsSkipVerify`); verify with `node scripts/vault/vault.mjs whoami`.
+- [ ] **[script]** Folders, created by the automation user with the admin as Owner (`vault.mjs ensure-folder <name> --share-owner <operator-mailbox>`):
   - `Vendor admins`: SaaS/admin accounts (`*-admin@svc.<domain>`)
   - `Personas`: employee accounts (M365/IdP users)
   - `Customers`: storefront customer test accounts
   - `Service & API`: API tokens, OAuth clients, HEC tokens, DB users
-- [ ] **[script]** Create the automation user `automation@svc.<domain>` with `register_user` (role `user`); complete its registration in a separate browser profile; save its private key and passphrase outside the repo (e.g. `~/.config/virtual-enterprise/`).
-- [ ] **[manual]** Share `Vendor admins`, `Personas`, `Customers`, and `Service & API` with the automation user (can update). **Do not share `Break-glass`.**
-- [ ] **[script]** Configure `go-passbolt-cli` for the automation user (server `https://vault.<domain>`, private key file, passphrase from an environment variable; allow the self-signed certificate). Point the `scripts/vault` adapter at it via `local/.env`.
-- [ ] Move the bootstrap credentials into the vault: Cloudflare login + 2FA recovery codes (`Break-glass`), `PASSBOLT_DB_PASSWORD` (`Service & API`).
-- [ ] **[script]** `./backup.sh <dir-outside-repo>`; store the backup (DB dump + server GPG keys + JWT keys) encrypted/offline. Repeat after significant changes and monthly (Phase 14).
+- [ ] **[manual]** Create `Break-glass` (Cloudflare, M365 global admin, OCI root, automation passphrase) in the UI, shared with no one, so the automation user never has access.
+- [ ] Move the bootstrap credentials into the vault: `PASSBOLT_DB_PASSWORD` → `Service & API` (**[script]** `vault.mjs upsert`); Cloudflare login + 2FA recovery codes → `Break-glass` (**[manual]**).
+- [ ] **[script]** `bash infra/compose/vault/backup.sh <dir-outside-repo>`; verify it; store the backup (DB dump + server GPG keys + JWT keys) encrypted/offline. Repeat after significant changes and monthly (Phase 14).
 - SMTP is configured in Phase 4. Until then, invites and email-based recovery don't work; that's fine for a single operator.
 - **Moving the vault later:** run `backup.sh` on the old host, `restore.sh` on the new host with the same `APP_FULL_BASE_URL`, then repoint DNS/hosts (e.g. a Cloudflare Tunnel hostname protected by Cloudflare Access). Users don't re-enroll because the URL is unchanged.
 - **Record:** vault URL, current host, backup location, automation user.
@@ -295,6 +297,7 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Cloudflare zone ID | | |
 | Vault URL | `https://vault.<domain>` | |
 | Vault host | | |
+| Vault bind address | | |
 | Vault backup location | | |
 | Vault automation user | `automation@svc.<domain>` | |
 | M365 tenant | | 90-day |

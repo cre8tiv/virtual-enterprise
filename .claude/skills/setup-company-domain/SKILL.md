@@ -68,7 +68,7 @@ Done when the registration status is `succeeded`.
 1. Confirm the domain appears in the account's registrations and note its expiry date.
 2. Confirm a DNS zone exists for the domain. If none exists, create it (tell the operator first). Note the zone ID.
 3. Update `local/registry.md`: **Company name**, **Domain**, **Cloudflare account ID**, **Cloudflare zone ID**, and the domain's expiry in the Renewal column. Replace `<domain>` in existing registry values with the domain.
-4. Write derived config into each component's gitignored `.env`. The committed `.env.example` files are public templates and keep their placeholders. For each file below: if `.env` doesn't exist, copy it from `.env.example`; then set only the listed keys, leaving other lines untouched:
+4. Write derived config into each component's gitignored `.env` with `node scripts/env/set-env.mjs <file> KEY=VALUE ...` (it creates the file from `.env.example` if needed and changes only the given keys). The committed `.env.example` files are public templates and keep their placeholders.
 
    | File | Keys |
    |---|---|

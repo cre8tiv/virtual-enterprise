@@ -48,8 +48,8 @@ services:
       - gpg-data:/etc/passbolt/gpg
       - jwt-data:/etc/passbolt/jwt
     command: ["/usr/bin/wait-for.sh", "-t", "0", "db:3306", "--", "/docker-entrypoint.sh"]
+    # HTTPS only: the extension and CLI never use port 80, so it isn't published (fewer local conflicts).
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${HTTP_PORT:-80}:80"
       - "${BIND_ADDR:-127.0.0.1}:${HTTPS_PORT:-443}:443"
 
 volumes:
