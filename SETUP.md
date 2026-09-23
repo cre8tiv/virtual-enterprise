@@ -1,0 +1,326 @@
+# Setup Runbook
+
+Ordered, repeatable steps to stand up an instance of the virtual enterprise described in [DESIGN.md](DESIGN.md). Written so each phase can later be automated.
+
+**Conventions**
+
+- `<company>` / `<domain>`: the fictional company's name and domain, chosen in Phase 1.
+- **Operator**: whoever is deploying this instance. **SUT**: the system under test.
+- **[manual]**: requires a human (CAPTCHA, payment verification, eligibility, email confirmation). **[script]**: candidate for automation.
+- **Record:** non-secret values to capture in `local/registry.md` (gitignored; template at the end of this file). **Secrets go in the operator vault only**, never in the repo.
+- Complete phases in order; later phases depend on earlier outputs.
+- **Idempotent:** every [script] step and every setup skill reads current state first (the registry and the live system), skips what is already done, and verifies after acting. Re-running a phase is always safe and never creates duplicates.
+
+**Email address rule:** all vendor/app sign-ups use `<system>-admin@svc.<domain>` from day one, **never** the root domain. Root-domain MX moves to M365 in Phase 4; `svc.` addresses keep working through that cutover.
+
+**Break-glass rule:** the Cloudflare account is owned by an operator mailbox **outside** `<domain>`. Mail to `<domain>` flows through Cloudflare, so a Cloudflare lockout would otherwise block its own recovery.
+
+---
+### Agent tooling (MCP servers)
+
+The repo's `.mcp.json` defines project MCP servers for agent-assisted setup. It contains **no secrets**: servers authenticate via OAuth on first use, or read tokens from environment variables. Claude Code asks each user to approve project servers on first launch.
+
+| Server | Used in | Auth | Must point at |
+|---|---|---|---|
+| `cloudflare` | Phases 1, 2, 5, 11 (DNS, Email Routing, Tunnel, Workers) | OAuth | The environment's Cloudflare account |
+| `cloudflare-docs` | Any | None | n/a |
+| `godaddy` | Phase 1 (public domain availability and suggestions; read-only) | None | n/a |
+| `supabase` | Phases 9–11 (migrations, Edge Functions, SQL, logs) | OAuth | The environment's Supabase org |
+| `microsoft-learn` | Phases 4, 6 (Graph/Entra docs) | None | n/a |
+| `m365-sandbox` | Phases 4, 6 (users, licenses, SharePoint, Entra apps) | `m365 login` (CLI for Microsoft 365) | **The E5 sandbox tenant** |
+| `stripe` | Phases 9–10 (test-mode data) | OAuth | The environment's Stripe account, test mode |
+| `shopify-dev` | Phases 10–11 (API docs, GraphQL validation) | None | n/a |
+
+- [ ] **[manual]** Launch `claude` in the repo and approve the project servers.
+- [ ] **[manual]** Complete OAuth for `cloudflare`, `supabase`, `stripe` **while signed in to the environment's accounts**, not the operator's production accounts.
+- [ ] **[manual]** `m365-sandbox` uses the CLI for Microsoft 365 (`npm i -g @pnp/cli-microsoft365`). Create a named connection to the sandbox (`m365 login` with the sandbox admin, then `m365 connection set --name <company>-sandbox`, or equivalent).
+- [ ] **[manual]** Add the SUT's own MCP server, if any, with `claude mcp add --scope local ...`. It is **not** committed.
+
+**Tenant safety:**
+
+- CLI for Microsoft 365 keeps **one active connection per OS user**, shared by every MCP server and shell that uses it. If a user-scope M365 server or your own shell is logged in to a production tenant, `m365-sandbox` acts on that tenant. Before any write, confirm `m365 status` shows the sandbox tenant ID from `local/registry.md`. Provisioning scripts pass the tenant ID explicitly and refuse to run otherwise.
+- Prefer environment-specific accounts for every OAuth server. If your browser session belongs to a production account, use a separate browser profile when completing OAuth.
+
+**Windows:** stdio servers launched with `npx` may need the `cmd /c` wrapper on native Windows. Override locally without editing the shared file, e.g. `claude mcp add --scope local shopify-dev -- cmd /c npx -y @shopify/dev-mcp@latest` (local scope takes precedence over project scope).
+
+
+## Phase 0: Prerequisites
+
+**Agent-assisted:** run the `/setup-prerequisites` skill in Claude Code; it performs the steps below and asks before installing anything.
+
+- [ ] **[manual]** Choose an operator mailbox outside `<domain>` (a team/distribution address, not personal). It owns only break-glass accounts. If you don't want to use your company email, sign up for a email from a free provider to start with.
+- [ ] **[manual]** Decide owners (primary + backup) for break-glass accounts.
+
+- [ ] **[script]** Check required tools (git, Docker + Compose with the daemon running, Node.js/npm, Terraform, `go-passbolt-cli`, CLI for Microsoft 365). Check-only by default; add the install flag to install what's missing (winget/Chocolatey, Homebrew, apt/dnf, or direct download):
+  - Windows: `powershell -ExecutionPolicy Bypass -File scripts/prereqs/prereqs.ps1 [-Install]`
+  - macOS/Linux: `bash scripts/prereqs/prereqs.sh [--install]`
+- [ ] **[manual]** Install the Passbolt browser extension.
+- [ ] **[script]** Create `local/` (gitignored) and copy the registry template into `local/registry.md`.
+- **Bootstrap secrets:** until the vault exists (Phase 2), keep credentials in your personal password manager. Phase 2 moves them into the vault.
+- **Record:** operator mailbox, owners.
+- [ ] **[manual]** Create a Cloudflare account with the operator mailbox and prepare it for Registrar (Phase 1 registers through the Registrar API):
+  - enable 2FA (hardware key or TOTP); keep the login and recovery codes in your personal password manager;
+  - add a default payment method;
+  - set the default registrant contact;
+  - accept the Domain Registration Agreement (Registrar → registrations page).
+- [ ] **[manual]** Complete OAuth for the `cloudflare` MCP server with this account, granting Registrar write and DNS/zone edit.
+
+## Phase 1: Company Name & Domain
+
+**Agent-assisted:** run the `/setup-company-domain` skill; it performs the steps below, resumes where a previous run stopped, and asks before registering.
+
+- [ ] Shortlist fictional company names (company profile: DESIGN.md §2). Working notes go in `local/names.md`.
+- [ ] For each candidate, confirm it is not a real business: web search, trademark search (USPTO / EUIPO), business registries (e.g. OpenCorporates). Pick one **clear** name.
+- [ ] **[script]** Synthesize domain candidates; quick-filter with the `godaddy` MCP; confirm availability and at-cost price with Cloudflare Registrar **check** (authoritative: the domain must be registrable at Cloudflare).
+- [ ] **[script]** After explicit operator confirmation (registrations are non-refundable): confirm the account doesn't already hold the domain, then register via Cloudflare Registrar with **auto-renew on** (the API defaults to off); WHOIS privacy (redaction) is the default.
+- [ ] **[script]** Verify the registration and the DNS zone (create the zone if missing).
+- [ ] **[script]** Write derived config: `apps/storefront/.env` from `.env.example` (`COMPANY_NAME`, `SITE_URL=https://www.<domain>`); replace `<domain>` placeholders in `local/registry.md`.
+- **Record:** company name, `<domain>`, Cloudflare account ID, zone ID, domain expiry.
+
+## Phase 2: Operator Vault (Passbolt CE)
+
+Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts on the operator's machine and can later move to any Docker host by backup/restore.
+
+**The vault URL is permanent:** `https://vault.<domain>` from day one. Passbolt ties each user's browser extension to the server URL, so changing it later means reconfiguring every user.
+
+- [ ] **[manual]** Point `vault.<domain>` at the local machine in the hosts file (`127.0.0.1  vault.<domain>`; Windows: `C:\Windows\System32\drivers\etc\hosts`, macOS/Linux: `/etc/hosts`). Requires admin rights. No public DNS record yet.
+- [ ] **[script]** In `infra/compose/vault/`: copy `.env.example` to `.env`; set `APP_FULL_BASE_URL=https://vault.<domain>`; generate `PASSBOLT_DB_PASSWORD` (keep it in your personal password manager until the vault is up, then move it in).
+- [ ] **[script]** `docker compose up -d`, then run the healthcheck:
+  `docker compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt healthcheck' www-data`
+  Expect warnings about the self-signed certificate and missing SMTP only.
+- [ ] **[script]** Register the first admin (no email needed; prints a registration URL):
+  `docker compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt register_user -u <operator-mailbox> -f <first> -l <last> -r admin' www-data`
+- [ ] **[manual]** Open the registration URL; accept the self-signed certificate; install the Passbolt browser extension; set a strong passphrase.
+- [ ] **[manual]** Download the **recovery kit** and store it, with the passphrase, **outside Passbolt** (offline and/or personal password manager). This is the vault's break-glass.
+- [ ] **[manual]** Enable TOTP MFA (Administration → Multi Factor Authentication) and enroll the admin.
+- [ ] **[manual]** Create folders:
+  - `Break-glass`: Cloudflare, M365 global admin, OCI root
+  - `Vendor admins`: SaaS/admin accounts (`*-admin@svc.<domain>`)
+  - `Personas`: employee accounts (M365/IdP users)
+  - `Customers`: storefront customer test accounts
+  - `Service & API`: API tokens, OAuth clients, HEC tokens, DB users
+- [ ] **[script]** Create the automation user `automation@svc.<domain>` with `register_user` (role `user`); complete its registration in a separate browser profile; save its private key and passphrase outside the repo (e.g. `~/.config/virtual-enterprise/`).
+- [ ] **[manual]** Share `Vendor admins`, `Personas`, `Customers`, and `Service & API` with the automation user (can update). **Do not share `Break-glass`.**
+- [ ] **[script]** Configure `go-passbolt-cli` for the automation user (server `https://vault.<domain>`, private key file, passphrase from an environment variable; allow the self-signed certificate). Point the `scripts/vault` adapter at it via `local/.env`.
+- [ ] Move the bootstrap credentials into the vault: Cloudflare login + 2FA recovery codes (`Break-glass`), `PASSBOLT_DB_PASSWORD` (`Service & API`).
+- [ ] **[script]** `./backup.sh <dir-outside-repo>`; store the backup (DB dump + server GPG keys + JWT keys) encrypted/offline. Repeat after significant changes and monthly (Phase 14).
+- SMTP is configured in Phase 4. Until then, invites and email-based recovery don't work; that's fine for a single operator.
+- **Moving the vault later:** run `backup.sh` on the old host, `restore.sh` on the new host with the same `APP_FULL_BASE_URL`, then repoint DNS/hosts (e.g. a Cloudflare Tunnel hostname protected by Cloudflare Access). Users don't re-enroll because the URL is unchanged.
+- **Record:** vault URL, current host, backup location, automation user.
+
+## Phase 3: Email Catch-All (Cloudflare Email Routing)
+
+- [ ] **[manual]** Enable Email Routing on subdomain `svc.<domain>`. Cloudflare adds the MX + SPF records.
+- [ ] **[manual]** Add the operator mailbox as a destination address and verify it.
+- [ ] **[manual]** Create a catch-all rule for `*@svc.<domain>` that forwards to the operator mailbox.
+- [ ] **[script]** Add DMARC: `_dmarc.<domain>  TXT  "v=DMARC1; p=none; rua=mailto:dmarc@svc.<domain>"`.
+- [ ] Send a test email to a random `x@svc.<domain>` address and confirm it arrives.
+- [ ] **[script]** Create a scoped Cloudflare API token (Zone:DNS:Edit, Zone:Email Routing:Edit, Account:Cloudflare Tunnel:Edit) for automation; store it in `Service & API`.
+- **Record:** routing destination, API token name.
+
+## Phase 4: Microsoft 365 E5 Developer Sandbox
+
+- [ ] **[manual]** Confirm eligibility (Visual Studio Pro/Enterprise subscription or partner benefit).
+- [ ] **[manual]** Join the M365 Developer Program with `m365-admin@svc.<domain>`.
+- [ ] **[manual]** Create a **configurable (empty)** E5 sandbox, not the instant one; see "Users" below. Store the global admin credentials in `Break-glass`.
+- [ ] **[manual]** Add `<domain>` as a custom domain in the M365 admin center.
+- [ ] **[script]** Add the M365 DNS records in Cloudflare: verification TXT, root MX, SPF, autodiscover CNAME, DKIM CNAMEs (`selector1`/`selector2`). Root-domain mail cuts over to Exchange here; `svc.` stays on Cloudflare.
+- [ ] **[manual]** Complete domain verification; enable DKIM signing; set `<domain>` as the default domain.
+- [ ] **[script]** Create an Entra app registration for automation (Graph: `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`); store the client secret or certificate in `Service & API`.
+- [ ] **[script]** Provision persona users (see below).
+- [ ] **[script]** Create shared mailbox `ops@<domain>`; switch the Cloudflare catch-all destination to it.
+- [ ] **[script]** Configure outbound SMTP for Passbolt (`EMAIL_*` in `infra/compose/vault/.env`, then `docker compose up -d`); send a test email from Administration → Email server. See DESIGN.md §10 on the SMTP relay choice.
+- [ ] **[script]** Confirm plus-addressing is enabled (`Get-OrganizationConfig | Select AllowPlusAddressInRecipients`).
+- [ ] Tighten DMARC to `p=quarantine`.
+- [ ] Set a renewal reminder (sandbox expires every 90 days unless there is qualifying activity).
+- **Record:** tenant ID, tenant name, persona roster version, renewal date.
+
+### Users: provision from the roster; don't import sample users
+
+Entra ID **cannot export existing passwords**, so pre-provisioned sample users (instant sandbox) can't be "imported" into the vault without resetting them. They are also generic sample personas, not the canonical employees. Instead:
+
+1. The canonical generator produces the persona roster (name, title, department, manager, UPN on `<domain>`).
+2. For each persona, a script:
+   - generates a strong random password;
+   - creates the user via Microsoft Graph (`passwordProfile.forceChangePasswordNextSignIn = false`) and assigns an E5 license (max 25 licensed; the rest stay unlicensed identities);
+   - writes the credential to the `Personas` group via the vault adapter, with UPN, URL, and tags (department, persona role).
+3. **MFA:** new tenants enable security defaults, which force MFA registration. Either register a TOTP authenticator per persona and store the seed in the persona's vault entry (Passbolt supports TOTP; this enables unattended persona logins for tests), or use Conditional Access to exempt a test group (Entra P1, included in E5).
+4. The script is idempotent: an existing user is skipped, or reset and re-vaulted with `--rotate`.
+
+## Phase 5: Infrastructure
+
+### 5a. Cloud site (OCI Always Free)
+
+- [ ] **[manual]** Create an OCI account with `oci-admin@svc.<domain>`; choose the home region deliberately (permanent; check A1 capacity). Store root credentials in `Break-glass`.
+- [ ] **[manual]** Upgrade to Pay-As-You-Go to avoid idle reclamation; create a budget alert at $1.
+- [ ] **[script]** Create an API signing key for Terraform; store it in `Service & API`.
+- [ ] **[script]** `terraform apply` in `infra/oci/`: VCN, private subnet, A1 VM(s) (Ubuntu arm64, 4 OCPU / 24 GB total), block volumes, Autonomous DB. No public ingress rules.
+- [ ] **[script]** Bootstrap VMs (cloud-init): Docker Engine + Compose, SSH keys only (key in vault), automatic security updates.
+- [ ] **[script]** Clone the repo onto each VM; render `infra/compose/cloud/.env` from the vault adapter.
+- [ ] **[script]** Create Cloudflare Tunnel `cloud`; run `cloudflared`; map `sso.`, `hr.` to local services (and `vault.`, if the vault moves here; see Phase 2).
+- [ ] **[manual]** (Optional) Put admin UIs behind Cloudflare Access (Zero Trust free tier).
+- **Record:** OCI tenancy OCID, region, VM names, tunnel ID, hostname → service map, Autonomous DB name.
+
+### 5b. On-prem site (x86 Docker host)
+
+Stack: `infra/compose/onprem/` (SQL Server 2022 Developer, Splunk Enterprise, optional `cloudflared`).
+
+- [ ] **[manual]** Provision an x86_64 host on a private network with **no public IP / no inbound rules** (~4 vCPU, 16 GB RAM, 100+ GB disk). Options: cloud VM in an isolated network (e.g. VS subscription Azure credits, with an auto-shutdown schedule) or a physical/Hyper-V machine.
+- [ ] **[script]** Install Docker Engine + Compose; SSH keys only (key in vault); automatic security updates.
+- [ ] **[script]** Clone the repo; render `infra/compose/onprem/.env` from `.env.example` using the vault adapter:
+  - `MSSQL_SA_PASSWORD`, `SUT_READER_PASSWORD`, `SPLUNK_PASSWORD`: generated, stored in `Service & API`
+  - `SPLUNK_HEC_TOKEN`: generated GUID, stored in `Service & API`
+  - `BIND_ADDR`: `127.0.0.1` if the SUT gateway runs on this host, otherwise the host's LAN IP
+- [ ] **[script]** `docker compose up -d` in `infra/compose/onprem/`. `sqlserver-init` creates the `Operations` DB and the read-only `sut_reader` login; Splunk loads the `ve_indexes` app (`idp`, `app`, `network`, `cloudflare`, `onprem`, `sut_audit`).
+- [ ] **[manual]** Obtain a Splunk Enterprise developer license with `splunk-admin@svc.<domain>`; apply it (Settings → Licensing, or `splunk add licenses`). Set a renewal reminder.
+- [ ] Smoke test: `sqlcmd -S localhost -U sut_reader -C -Q "SELECT DB_NAME()" -d Operations`; Splunk web on `:8000`; HEC `curl -k https://localhost:8088/services/collector/health`.
+- [ ] *(Optional, direct access)* Create Cloudflare Tunnel `onprem`; set `CLOUDFLARE_TUNNEL_TOKEN`; `docker compose --profile tunnel up -d`; map `siem.` → `http://splunk:8000`, `siem-api.` → `https://splunk:8089` (noTLSVerify), `hec.` → `https://splunk:8088` (noTLSVerify). Protect `siem.` with Cloudflare Access. SQL Server is not published (raw TCP needs client-side `cloudflared`).
+- **Record:** host name, network, `BIND_ADDR`, Splunk version, license expiry, tunnel ID (if used).
+
+## Phase 6: Workforce Identity
+
+### authentik (primary IdP)
+- [ ] **[script]** Deploy authentik via Compose at `https://sso.<domain>`.
+- [ ] **[manual]** Complete initial admin setup; enable MFA for admins.
+- [ ] **[script]** Create groups mirroring departments.
+- [ ] **[script]** Configure outbound email (SMTP via M365 `ops@<domain>`).
+
+### Okta Developer org (secondary IdP)
+- [ ] **[manual]** Sign up for an Okta developer org with `okta-admin@svc.<domain>`.
+- [ ] **[manual]** Verify `<domain>` in Okta (DNS TXT via Cloudflare).
+- [ ] **[script]** Create groups mirroring departments.
+
+### Entra ID (tertiary IdP, from Phase 4 tenant)
+- [ ] **[script]** Create groups mirroring departments.
+- [ ] Confirm the E5 license includes Entra ID P1/P2 (needed for SCIM to custom apps).
+
+- **Record:** IdP URLs, org/tenant IDs.
+
+## Phase 7: HR (Odoo Community + Payroll DB)
+
+- [ ] **[script]** Deploy Odoo Community + Postgres via Compose at `https://hr.<domain>` (verify arm64 image).
+- [ ] **[manual]** Create database, install apps: Employees, Time Off, Recruitment, Attendance, Expenses (Inventory/Purchase optional).
+- [ ] **[script]** Create the `payroll` schema in Postgres.
+- [ ] **[script]** Create an API user for loaders and SUT access; store it in `Service & API`.
+- **Record:** Odoo URL, DB name.
+
+## Phase 8: SIEM Ingestion
+
+Splunk is deployed in Phase 5b.
+
+- [ ] **[script]** Forward logs to Splunk HEC: Cloudflare audit logs (`cloudflare`), OCI audit + cloud-site app logs (`app`), IdP sign-ins (`idp`), on-prem host/Docker logs (`onprem`).
+- **Record:** HEC sources.
+
+## Phase 9: SaaS Accounts
+
+Sign up each with `<system>-admin@svc.<domain>`; store the login in `Vendor admins` and API credentials in `Service & API`.
+
+- [ ] **[manual]** Salesforce Developer Edition
+- [ ] **[manual]** HubSpot developer test account
+- [ ] **[manual]** QuickBooks Online sandbox (Intuit Developer) *(or ERPNext)*
+- [ ] **[manual]** Shopify Partner account + dev store; create a Storefront API access token (headless channel) and Admin API app
+- [ ] **[manual]** Stripe account (test mode)
+- [ ] **[manual]** ServiceNow Personal Developer Instance
+- [ ] **[manual]** Jira Cloud (free) + GitHub organization
+- [ ] **[manual]** Snowflake trial
+- [ ] **[manual]** Google account (`ga-admin@svc.<domain>`) → GA4 property + web data stream for `www.<domain>`; create a Measurement Protocol API secret
+- [ ] **[manual]** Supabase account/org + project (region near the OCI home region)
+- [ ] **[manual]** Cloudflare Workers (free plan) on the Phase 1 account; create an API token for `wrangler` (Workers Scripts:Edit, Workers Routes:Edit) and store it in `Service & API`
+- [ ] Note expirations (PDI hibernation, Snowflake trial end, Supabase inactivity pause).
+- **Record:** instance URLs, org/project IDs, GA4 measurement ID, expiry dates.
+
+## Phase 10: Canonical Data & Loaders
+
+- [ ] **[script]** Run the canonical generator (fixed seed): customers, contacts, products, employees, price lists, cross-system ID map.
+- [ ] **[script]** Load employees into Odoo, then provision them to authentik, Okta, and Entra; vault any new persona credentials.
+- [ ] **[script]** Run loaders per system (Salesforce, HubSpot, QBO, Shopify catalog + customers, Stripe, ServiceNow, Jira, SharePoint, Postgres, Autonomous DB, Snowflake).
+- [ ] **[script]** Load the on-prem `Operations` DB (SQL Server): production orders, BOMs, warehouse bins/inventory, shipments (referencing Shopify order IDs), plus large scale-test tables. Loader runs on the on-prem host or over the private network.
+- [ ] **[script]** Seed storefront customers: create Supabase Auth users for canonical contacts; vault their credentials in `Customers`; link Supabase user ↔ Shopify customer ↔ CRM account.
+- [ ] **[script]** Inject intentional data-quality issues per DESIGN.md §4.
+- [ ] Validate record counts per system against the canonical dataset.
+- **Record:** seed value, generator version, load date.
+
+## Phase 11: Storefront Web App
+
+Design: [apps/storefront/DESIGN.md](apps/storefront/DESIGN.md).
+
+- [ ] **[script]** Apply Supabase migrations (`apps/storefront/supabase/migrations/`): customers, orders mirror, support requests, webhook events, RLS policies.
+- [ ] **[script]** Configure Supabase Auth: site URL `https://www.<domain>`, redirect URLs, SMTP via M365 `ops@<domain>` (or Supabase default for testing).
+- [ ] **[script]** Deploy Edge Functions `link-customer` and `shopify-webhook`; set their secrets from the vault (`supabase secrets set`: Shopify Admin token, Shopify webhook secret, GA4 API secret).
+- [ ] **[script]** Build the static export with public values from the vault (`NEXT_PUBLIC_*`: Shopify store domain + Storefront public token, Supabase URL + publishable key, GA4 measurement ID); `wrangler deploy` to Cloudflare Workers static assets.
+- [ ] **[script]** Attach `www.<domain>` as a Workers custom domain; add an apex → `www` redirect rule.
+- [ ] **[script]** Register Shopify webhooks (`orders/create`, `orders/updated`, `orders/fulfilled`, `refunds/create`) → `shopify-webhook` Edge Function URL.
+- [ ] Smoke test: sign up → browse → add to cart → checkout (Bogus Gateway) → order appears in Shopify, Supabase mirror, and GA4 realtime.
+- **Record:** Worker name, Edge Function URLs, webhook IDs.
+
+## Phase 12: SUT Integration
+
+Per SUT (see DESIGN.md §7):
+
+- [ ] **[manual]** Create/choose the SUT account/tenant for this environment.
+- [ ] **[manual]** Register the SUT as an SSO app in authentik (SAML + OIDC), Okta, and Entra.
+- [ ] **[manual]** Configure SCIM provisioning from each IdP into the SUT; map groups to SUT roles.
+- [ ] **[manual]** Install the SUT's on-prem gateway/agent (if any) in the on-prem site, outbound-only; point it at SQL Server (`sut_reader`) and Splunk (`:8089`).
+- [ ] **[script]** Create SUT connections/credentials to environment systems per persona (read-only vs read-write).
+- [ ] **[script]** Forward SUT audit logs to the SIEM.
+- [ ] **[script]** Implement/configure the eval adapter in `evals/adapters/<sut>/`.
+- **Record:** SUT tenant, SSO/SCIM app IDs, connection names.
+
+## Phase 13: Simulator & Evals
+
+- [ ] **[script]** Schedule the daily simulator run (business processes in DESIGN.md §5), including synthetic storefront sessions.
+- [ ] **[script]** Start log emitters (IdP, app, network) pointed at the SIEM.
+- [ ] **[script]** Generate the eval question bank with expected answers from canonical data.
+- [ ] **[script]** Run the eval runner against the SUT and store the baseline score.
+
+## Phase 14: Ongoing Maintenance
+
+- [ ] Monthly: review renewal dates in `local/registry.md` (domain, M365 90-day, Splunk license, Snowflake trial, ServiceNow PDI, Supabase pause, OCI reclamation status).
+- [ ] Rotate API tokens and persona/customer passwords (provisioning scripts `--rotate`).
+- [ ] Run the vault `backup.sh`; periodically test `restore.sh` into a throwaway stack.
+- [ ] Re-run the eval suite on each SUT release.
+
+---
+
+## Registry Template
+
+Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live in the vault.
+
+| Key | Value | Renewal / Expiry |
+|---|---|---|
+| Company name | | |
+| Domain | | Annual |
+| Operator mailbox | | |
+| Cloudflare account ID | | |
+| Cloudflare zone ID | | |
+| Vault URL | `https://vault.<domain>` | |
+| Vault host | | |
+| Vault backup location | | |
+| Vault automation user | `automation@svc.<domain>` | |
+| M365 tenant | | 90-day |
+| OCI tenancy / region | | |
+| OCI VMs | | Idle reclamation |
+| Autonomous DB | | |
+| Cloudflare Tunnel IDs (cloud / onprem) | | |
+| On-prem host / network | | |
+| On-prem `BIND_ADDR` | | |
+| SQL Server version | | |
+| Splunk version | | Dev license |
+| Splunk URL (if tunneled) | `https://siem.<domain>` | |
+| SUT gateway host | | |
+| authentik URL | `https://sso.<domain>` | |
+| Okta org URL | | |
+| Odoo URL | `https://hr.<domain>` | |
+| Salesforce org | | |
+| HubSpot account | | |
+| QBO sandbox company | | |
+| Shopify dev store | | |
+| Stripe account | | |
+| ServiceNow PDI | | Hibernation |
+| Jira site | | |
+| Snowflake account | | Trial |
+| GA4 property / measurement ID | | |
+| Supabase project | | Inactivity pause |
+| Storefront Worker | | |
+| Storefront URL | `https://www.<domain>` | |
+| Canonical seed | | |

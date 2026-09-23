@@ -1,0 +1,19 @@
+# Deployment-specific values and secrets: never commit
+local/
+.env
+.env.*
+!.env.example
+*.key
+*.asc
+backups/
+*.pem
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Build output
+node_modules/
+.next/
+.vercel/
+.supabase/
