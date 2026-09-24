@@ -1,0 +1,96 @@
+# Departments of the fictional company. Total headcount: 400 (NA 242, EMEA 96, APAC 62).
+# head: persona key (personas.yaml). default_apps: app-<name> groups every member of the department gets.
+# Generated (non-persona) employees are distributed by `headcount` and report into the department's managers.
+
+departments:
+  - key: executive
+    name: Executive
+    cost_center: CC-1000
+    head: ceo
+    description: >-
+      Company leadership. Sets strategy, approves budgets, and owns board reporting.
+      Reads across every function; rarely edits operational data.
+    headcount: { na: 4, emea: 1, apac: 0 }
+    default_apps: [salesforce, qbo, servicenow]
+
+  - key: sales
+    name: Sales
+    cost_center: CC-2000
+    head: vp-sales
+    description: >-
+      Direct B2B sales to industrial buyers, organized by region and territory. Owns accounts,
+      opportunities, quotes, and the sales forecast. Salesforce is the system of record; HubSpot
+      holds overlapping marketing-sourced leads.
+    headcount: { na: 40, emea: 18, apac: 12 }
+    default_apps: [salesforce, hubspot]
+
+  - key: marketing
+    name: Marketing
+    cost_center: CC-2100
+    head: marketing-director
+    description: >-
+      Demand generation, campaigns, the public website and storefront content, and web analytics.
+      Hands qualified leads to Sales.
+    headcount: { na: 14, emea: 4, apac: 2 }
+    default_apps: [hubspot, ga4, shopify]
+
+  - key: finance
+    name: Finance
+    cost_center: CC-3000
+    head: cfo
+    description: >-
+      Accounting, billing, collections, payments, and payroll processing. QuickBooks Online is the
+      general ledger; Stripe handles card payments and refunds.
+    headcount: { na: 17, emea: 5, apac: 3 }
+    default_apps: [qbo, stripe]
+
+  - key: operations
+    name: Operations
+    cost_center: CC-4000
+    head: vp-ops
+    description: >-
+      Manufacturing, warehousing, fulfillment, and purchasing. Runs the legacy on-prem MES/WMS
+      (SQL Server) for production orders, bills of materials, bin inventory, and shipments.
+      Largest department; most staff are shop-floor and warehouse workers without mailboxes.
+    headcount: { na: 105, emea: 45, apac: 30 }
+    default_apps: [odoo, mes, shopify]
+
+  - key: support
+    name: Customer Support
+    cost_center: CC-5000
+    head: support-manager
+    description: >-
+      Handles customer cases from the portal, email, and phone: order status, returns, refunds,
+      and escalations to Engineering. ServiceNow is the case system.
+    headcount: { na: 22, emea: 10, apac: 8 }
+    default_apps: [servicenow, shopify, stripe]
+
+  - key: engineering
+    name: Engineering
+    cost_center: CC-6000
+    head: eng-manager
+    description: >-
+      Product engineering and internal software (storefront, integrations). Works from Jira and
+      GitHub; receives escalations from Support.
+    headcount: { na: 20, emea: 6, apac: 4 }
+    default_apps: [jira, github]
+
+  - key: hr
+    name: Human Resources
+    cost_center: CC-7000
+    head: hr-manager
+    description: >-
+      Hiring, onboarding, employee records, time off, and offboarding. Odoo HR is the system of
+      record for employees and drives joiner/mover/leaver provisioning into the identity providers.
+    headcount: { na: 8, emea: 3, apac: 1 }
+    default_apps: [odoo]
+
+  - key: it
+    name: IT & Security
+    cost_center: CC-8000
+    head: it-director
+    description: >-
+      Identity, devices, SaaS administration, internal help desk, and security monitoring.
+      Administers the identity providers and M365; the Security team works in Splunk.
+    headcount: { na: 12, emea: 4, apac: 2 }
+    default_apps: [servicenow, jira, splunk]

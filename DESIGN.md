@@ -41,6 +41,26 @@ A fictional B2B industrial distributor / light manufacturer. Each deployment cho
 
 Chosen because the business naturally spans CRM, ERP, commerce, support, HR, identity, security, and a hybrid cloud/on-prem footprint.
 
+### 2.1 Organization
+
+Defined as data in `canonical/org/`; every system's users and groups derive from it.
+
+| File | Defines |
+|---|---|
+| `sites.yaml` | Regions (NA 60%, EMEA 25%, APAC 15%) and sites: Columbus HQ + plant + on-prem datacenter (USD), Rotterdam distribution center (EUR), Singapore sales & sourcing (SGD) |
+| `departments.yaml` | 9 departments with description, head, cost center, headcount per region (400 total), and default apps |
+| `groups.yaml` | Group catalog and naming: `dept-*`, `region-*`, `role-*` (permission tests), `app-*` (access); provisioned to every IdP, with `dept-*`/`region-*`/`role-*` pushed to the SUT |
+| `personas.yaml` | 25 named employees with manager, groups, lifecycle events, and a **test purpose** each |
+
+- **Personas vs generated employees:** the 25 personas are the M365 E5 sandbox's 25 licensed users (`app-m365`, group-based licensing) and the people tests refer to by name. The other ~375 employees are generated with a fixed seed, report into persona managers, and exist as unlicensed identities in Odoo and the IdPs.
+- **Designed-in test cases:**
+  - `app-sut` holds 17 of 25 personas, so SCIM scoping has negative cases.
+  - `role-payroll` excludes the CEO and CFO: seniority doesn't imply data access.
+  - A mover (`ae-apac`, APAC → EMEA) and a leaver (`support-t1`) have lifecycle events scheduled relative to the seed date.
+  - A joiner (a generated employee with a future start date) gets a license on the start date.
+- **IDs:** personas are `E0001`–`E0025`; generated employees start at `E0026`. UPNs are `{first}.{last}@{domain}`.
+- **Admin accounts** (tenant global admin, IdP admins) are break-glass accounts, not personas.
+
 ## 3. System Stack
 
 | Function | System | Site | Tier / Cost | Notes |
@@ -138,6 +158,7 @@ A real domain owned by the operator is required: IdP federation and SSO routing 
 
 ```
 canonical/            master dataset: single source of truth
+  org/                sites, departments, groups, 25 personas (hand-authored YAML; §2.1)
   generator/          seeded, deterministic entity generation
   schema/             master entities + cross-system ID map
 loaders/              one per target system; push canonical data via vendor APIs
@@ -268,6 +289,7 @@ Entries are append-only; later entries supersede earlier ones.
 | 2026-09-23 | Vault publishes HTTPS only; local port conflicts are solved with an alternate loopback address (e.g. `127.0.0.2`), not an alternate port | The hosts file maps names to IPs, not ports; a port would become part of the permanent Passbolt URL and break enrollment when the vault moves. |
 | 2026-09-23 | Vault TLS = Let's Encrypt via Cloudflare DNS-01, terminated by Traefik in the vault stack; mkcert only as offline fallback | Self-signed certificates broke TOTP enrollment. DNS-01 works for a hosts-file-only name, is trusted everywhere (browsers, extension, Go CLI, Node) with no trust-store changes, auto-renews, and survives moving the vault. mkcert would trust only one machine and modify its trust stores. |
 | 2026-09-24 | Phase 3 automated via `setup-email-routing` skill (Cloudflare MCP); delivery proven by test, with per-address rules as fallback | Unclear whether the zone catch-all covers subdomain addresses; sign-up addresses are known in advance, so literal rules always work. Generic "automation" Cloudflare API token dropped: tokens are created per purpose, least privilege, when a script needs one. |
+| 2026-09-24 | Org model as hand-authored YAML in `canonical/org/`: 9 departments, group catalog, 25 personas = 25 E5 licenses; ~375 generated employees | Defined before provisioning because every IdP, group, SCIM scope, and permission test derives from it. Each persona carries a test purpose, so coverage is deliberate. |
 | 2026-09-23 | Remove Vaultwarden from the stack | Avoid two password managers; the operator vault must not double as a company system exposed to the SUT. |
 
 ## 10. Open Questions & Risks

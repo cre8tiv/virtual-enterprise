@@ -1,0 +1,42 @@
+# Company sites and regions. Referenced by departments.yaml and personas.yaml.
+# Differences in timezone and currency across regions are intentional (data-quality tests).
+
+regions:
+  - key: na
+    name: North America
+    headcount_share: 0.60
+  - key: emea
+    name: Europe, Middle East & Africa
+    headcount_share: 0.25
+  - key: apac
+    name: Asia-Pacific
+    headcount_share: 0.15
+
+sites:
+  - key: hq
+    region: na
+    name: Headquarters & Plant
+    city: Columbus
+    country: US
+    timezone: America/New_York
+    currency: USD
+    functions: [headquarters, manufacturing, warehouse, datacenter]
+    notes: Hosts the on-prem site (SQL Server MES/WMS, Splunk).
+
+  - key: rotterdam
+    region: emea
+    name: EMEA Distribution Center
+    city: Rotterdam
+    country: NL
+    timezone: Europe/Amsterdam
+    currency: EUR
+    functions: [sales-office, warehouse]
+
+  - key: singapore
+    region: apac
+    name: APAC Sales & Sourcing Office
+    city: Singapore
+    country: SG
+    timezone: Asia/Singapore
+    currency: SGD
+    functions: [sales-office, sourcing]

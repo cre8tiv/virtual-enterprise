@@ -1,0 +1,82 @@
+# Group catalog. Provisioned identically to every workforce IdP (Entra, authentik, Okta) and, where
+# push_to_sut is true, pushed to the system under test via SCIM so it can map groups to roles.
+#
+# Naming: dept-<department>, region-<region>, role-<purpose>, app-<system>.
+# Membership:
+#   department  every employee in the department (departments.yaml)
+#   region      every employee in the region
+#   licensed    personas with licensed: true (drives M365 group-based licensing)
+#   default     members of departments whose default_apps include this app
+#   explicit    only personas that list the group in extra_groups (personas.yaml)
+# An app group's membership is the union of its `default` departments and explicit additions.
+
+defaults:
+  provision_to: [entra, authentik, okta]
+
+groups:
+  # --- departments ---------------------------------------------------------
+  - { name: dept-executive,   type: department, membership: department, push_to_sut: true }
+  - { name: dept-sales,       type: department, membership: department, push_to_sut: true }
+  - { name: dept-marketing,   type: department, membership: department, push_to_sut: true }
+  - { name: dept-finance,     type: department, membership: department, push_to_sut: true }
+  - { name: dept-operations,  type: department, membership: department, push_to_sut: true }
+  - { name: dept-support,     type: department, membership: department, push_to_sut: true }
+  - { name: dept-engineering, type: department, membership: department, push_to_sut: true }
+  - { name: dept-hr,          type: department, membership: department, push_to_sut: true }
+  - { name: dept-it,          type: department, membership: department, push_to_sut: true }
+
+  # --- regions -------------------------------------------------------------
+  - { name: region-na,   type: region, membership: region, push_to_sut: true }
+  - { name: region-emea, type: region, membership: region, push_to_sut: true }
+  - { name: region-apac, type: region, membership: region, push_to_sut: true }
+
+  # --- roles (permission tests) -------------------------------------------
+  - name: role-executives
+    type: role
+    membership: explicit
+    push_to_sut: true
+    description: Company officers. Cross-functional read access.
+  - name: role-managers
+    type: role
+    membership: explicit
+    push_to_sut: true
+    description: People managers. May see their reports' records.
+  - name: role-payroll
+    type: role
+    membership: explicit
+    push_to_sut: true
+    description: >-
+      The only group allowed to read the payroll schema. Deliberately excludes the CFO and CEO
+      to test that seniority doesn't imply access.
+  - name: role-it-admins
+    type: role
+    membership: explicit
+    push_to_sut: true
+    description: Administrators of identity, M365, and SaaS apps. Maps to admin roles in the SUT.
+  - name: role-security
+    type: role
+    membership: explicit
+    push_to_sut: true
+    description: Security monitoring and audit (SIEM, audit logs).
+
+  # --- apps (access) --------------------------------------------------------
+  - { name: app-m365,       type: app, membership: licensed, push_to_sut: false, description: Licensed M365 users (group-based licensing). }
+  - { name: app-salesforce, type: app, membership: default,  push_to_sut: false }
+  - { name: app-hubspot,    type: app, membership: default,  push_to_sut: false }
+  - { name: app-ga4,        type: app, membership: default,  push_to_sut: false }
+  - { name: app-shopify,    type: app, membership: default,  push_to_sut: false }
+  - { name: app-stripe,     type: app, membership: default,  push_to_sut: false }
+  - { name: app-qbo,        type: app, membership: default,  push_to_sut: false }
+  - { name: app-odoo,       type: app, membership: default,  push_to_sut: false }
+  - { name: app-mes,        type: app, membership: default,  push_to_sut: false, description: On-prem MES/WMS (SQL Server Operations DB). }
+  - { name: app-servicenow, type: app, membership: default,  push_to_sut: false }
+  - { name: app-jira,       type: app, membership: default,  push_to_sut: false }
+  - { name: app-github,     type: app, membership: default,  push_to_sut: false }
+  - { name: app-splunk,     type: app, membership: default,  push_to_sut: false }
+  - name: app-sut
+    type: app
+    membership: explicit
+    push_to_sut: false
+    description: >-
+      Assignment group for the system under test: members are provisioned into the SUT via SCIM.
+      Deliberately a subset of personas, so SCIM scoping (who is and isn't provisioned) is testable.

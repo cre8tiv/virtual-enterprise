@@ -147,7 +147,7 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 
 Entra ID **cannot export existing passwords**, so pre-provisioned sample users (instant sandbox) can't be "imported" into the vault without resetting them. They are also generic sample personas, not the canonical employees. Instead:
 
-1. The canonical generator produces the persona roster (name, title, department, manager, UPN on `<domain>`).
+1. The persona roster comes from `canonical/org/personas.yaml` (25 personas: name, title, department, site, manager, groups; UPN `{first}.{last}@<domain>`), and groups from `canonical/org/groups.yaml` (DESIGN.md §2.1).
 2. For each persona, a script:
    - generates a strong random password;
    - creates the user via Microsoft Graph (`passwordProfile.forceChangePasswordNextSignIn = false`) and assigns an E5 license (max 25 licensed; the rest stay unlicensed identities);
