@@ -131,13 +131,15 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 
 Graph work runs through `scripts/m365/` as the `ve-provisioning` app registered **inside the sandbox**, never through the `m365` CLI, whose single active connection is shared with the operator's other tenants. Every script checks the token's tenant against **M365 tenant ID** in the registry.
 
-- [ ] **[manual]** Confirm eligibility (Visual Studio Pro/Enterprise subscription or partner benefit). Join the M365 Developer Program with `m365-admin@svc.<domain>` and create a **configurable (empty)** E5 sandbox, not the instant one (see "Users" below). Store the global admin credentials in `Break-glass`; record tenant ID, tenant name, and sandbox expiry.
+- [ ] **[manual]** Confirm eligibility (Visual Studio Pro/Enterprise subscription or partner benefit). Join the M365 Developer Program with `m365-admin@svc.<domain>` and create a **configurable (empty)** E5 sandbox (see "Users" below). Store the global admin credentials (`admin@<tenant>.onmicrosoft.com`) in `Break-glass`; record tenant ID, tenant name, sandbox expiry, and the Developer Program account email.
+  - **Existing sandbox:** adopt it, even an instant one with sample users or one registered under another email. Recreating isn't practical (a deleted sandbox means a 60–90 day wait; a new account must itself be eligible). The cleanup step below removes the samples. If the program's email is a mailbox inside the sandbox, change the profile's contact email to `m365-admin@svc.<domain>` if possible; otherwise keep that mailbox licensed so renewal warnings arrive.
 - [ ] **[manual]** Register the Entra app `ve-provisioning` (single tenant; Graph application permissions `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`, `Domain.ReadWrite.All`, `Organization.Read.All`; admin consent; client secret). Save it in Passbolt `Service & API` as `Entra app: ve-provisioning` (username = client ID, password = secret).
 - [ ] **[script]** Add and verify `<domain>` (`node scripts/m365/domain.mjs add|status|verify|default`); the verification TXT record goes into Cloudflare.
 - [ ] **[script]** If **Email Routing apex** is `enabled` in the registry, disable Email Routing for the apex only (keep `svc.<domain>`) so its locked root MX records are released.
 - [ ] **[script]** Create the service records from `domain.mjs status` in Cloudflare, **DNS only**: root MX, SPF, autodiscover, plus Teams and Intune records. Root-domain mail cuts over to Exchange here; `svc.` stays on Cloudflare.
 - [ ] **[manual]** DKIM: read the two selector CNAMEs in the Defender portal (the **[script]** step creates them in Cloudflare), then enable signing.
-- [ ] **[script]** Provision the org model (see below): `node scripts/m365/provision.mjs` (plan), then `--apply`. If the sandbox admin holds an E5 license, remove it first so all 25 personas get one.
+- [ ] **[script]** Remove objects the org model doesn't manage (instant-sandbox sample users, Microsoft 365 groups and their Teams/sites): `node scripts/m365/cleanup.mjs` (plan), then `--apply` after reviewing the list. Personas, directory-role holders (the admin), and `ops@` are always protected; deleted objects are purged so licenses and names free up immediately.
+- [ ] **[script]** Provision the org model (see below): `node scripts/m365/provision.mjs` (plan), then `--apply`. If the sandbox admin holds an E5 license, remove it first so all 25 personas get one, unless the admin's mailbox receives the Developer Program's renewal warnings.
 - [ ] **[manual]** Create shared mailbox `ops@<domain>` (full access: `it-director`, `sysadmin`). Test by sending external mail to `ops+phase4@<domain>` (proves root delivery and plus-addressing).
 - [ ] **[script]** Add `ops@<domain>` as a Cloudflare destination (**[manual]** click its verification email), then point the catch-all and literal rules at it.
 - [ ] Tighten DMARC to `p=quarantine` once DKIM is enabled and the test mail passed.
@@ -145,9 +147,9 @@ Graph work runs through `scripts/m365/` as the `ve-provisioning` app registered 
 - Set a renewal reminder (sandbox expires every 90 days unless there is qualifying activity; the app secret also expires).
 - **Record:** tenant ID, tenant name, sandbox expiry, `ve-provisioning` secret expiry, persona roster version.
 
-### Users: provision from the roster; don't import sample users
+### Users: provision from the roster; remove sample users
 
-Entra ID **cannot export existing passwords**, so pre-provisioned sample users (instant sandbox) can't be "imported" into the vault without resetting them. They are also generic sample personas, not the canonical employees. Instead:
+Entra ID **cannot export existing passwords**, so pre-provisioned sample users (instant sandbox) can't be "imported" into the vault without resetting them. They are also generic sample personas, not the canonical employees, and each holds an E5 license the personas need. `cleanup.mjs` removes them. Then:
 
 1. The persona roster comes from `canonical/org/personas.yaml` (25 personas: name, title, department, site, manager, groups; UPN `{first}.{last}@<domain>`), and groups from `canonical/org/groups.yaml` (DESIGN.md §2.1).
 2. `scripts/m365/provision.mjs` creates the catalog groups (security groups), then for each persona:
@@ -313,6 +315,7 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Vault automation user | `automation@svc.<domain>` | |
 | M365 tenant ID | | 90-day |
 | M365 tenant name | | |
+| M365 developer program account | | |
 | ve-provisioning secret | | |
 | Persona roster version | | |
 | OCI tenancy / region | | |
