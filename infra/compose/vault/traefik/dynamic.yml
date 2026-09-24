@@ -1,0 +1,23 @@
+# Traefik routing for the vault. VAULT_HOST comes from .env (e.g. vault.example.com).
+http:
+  routers:
+    passbolt:
+      rule: 'Host(`{{ env "VAULT_HOST" }}`)'
+      entryPoints: [websecure]
+      service: passbolt
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: '{{ env "VAULT_HOST" }}'
+
+  services:
+    passbolt:
+      loadBalancer:
+        serversTransport: passbolt-internal
+        servers:
+          - url: https://passbolt:443
+
+  # Passbolt's own certificate is self-signed; it's only used on the internal Docker network.
+  serversTransports:
+    passbolt-internal:
+      insecureSkipVerify: true

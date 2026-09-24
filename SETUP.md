@@ -88,23 +88,25 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 - [ ] **[script]** Choose the bind address: `127.0.0.1` if port 443 is free there, otherwise another loopback address such as `127.0.0.2` (`BIND_ADDR` in `infra/compose/vault/.env`; macOS needs `sudo ifconfig lo0 alias 127.0.0.2`). The hosts file can't carry a port, so a different address keeps the URL port-less and portable. Only port 443 is published; port 80 isn't needed.
 - [ ] **[manual]** Point `vault.<domain>` at that address in the hosts file (`<BIND_ADDR>  vault.<domain>`; Windows: `C:\Windows\System32\drivers\etc\hosts`, macOS/Linux: `/etc/hosts`). Requires admin rights. No public DNS record yet.
 - [ ] **[script]** Generate `PASSBOLT_DB_PASSWORD` in `infra/compose/vault/.env` only if empty (`scripts/env/set-env.mjs ... --if-empty`; changing it after initialization breaks the stack).
-- [ ] **[script]** `docker compose up -d`, then run the healthcheck:
+- [ ] **[manual]** Create a Cloudflare API token `vault-acme` (dashboard → My Profile → API Tokens → "Edit zone DNS" template): **Zone:Read + DNS:Edit**, limited to the `<domain>` zone. Paste it into `infra/compose/vault/.env` as `CLOUDFLARE_DNS_API_TOKEN`. Traefik uses it to get a trusted Let's Encrypt certificate for `vault.<domain>` via the DNS-01 challenge: no public DNS record, no inbound port, and no changes to local trust stores. A trusted certificate is required; with a self-signed one, browsers and the extension treat the vault as insecure and TOTP enrollment fails.
+- [ ] **[script]** `docker compose up -d` (Passbolt, MariaDB, Traefik). Confirm the certificate is trusted: `https://vault.<domain>` opens with no warning, issued by Let's Encrypt (first issuance takes a minute or two; see `docker compose logs traefik`). Then run the healthcheck:
   `docker compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt healthcheck' www-data`
-  Expect warnings about the self-signed certificate and missing SMTP only.
+  Expect a warning about missing SMTP only.
 - [ ] **[script]** Register the first admin (no email needed; prints a registration URL):
   `docker compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt register_user -u <operator-mailbox> -f <first> -l <last> -r admin' www-data`
-- [ ] **[manual]** Open the registration URL; accept the self-signed certificate; install the Passbolt browser extension; set a strong passphrase.
+- [ ] **[manual]** Open the registration URL; install the Passbolt browser extension; set a strong passphrase.
 - [ ] **[manual]** Download the **recovery kit** and store it, with the passphrase, **outside Passbolt** (offline and/or personal password manager). This is the vault's break-glass.
 - [ ] **[manual]** Enable TOTP MFA (Administration → Multi Factor Authentication) and enroll the admin.
 - [ ] **[script]** Register the automation user `automation@svc.<domain>` (role `user`). **[manual]** Complete its registration in a separate browser profile; export its private key to `~/.config/virtual-enterprise/automation.asc` and write its passphrase to `~/.config/virtual-enterprise/automation.passphrase` (user-only permissions).
-- [ ] **[script]** Configure `go-passbolt-cli` with a project config (`passbolt configure --config ~/.config/virtual-enterprise/passbolt.toml --serverAddress https://vault.<domain> --userPrivateKeyFile ... --tlsSkipVerify`); verify with `node scripts/vault/vault.mjs whoami`.
+- [ ] **[script]** Configure `go-passbolt-cli` with a project config (`passbolt configure --config ~/.config/virtual-enterprise/passbolt.toml --serverAddress https://vault.<domain> --userPrivateKeyFile ...`; TLS verification stays on); verify with `node scripts/vault/vault.mjs whoami`.
 - [ ] **[script]** Folders, created by the automation user with the admin as Owner (`vault.mjs ensure-folder <name> --share-owner <operator-mailbox>`):
   - `Vendor admins`: SaaS/admin accounts (`*-admin@svc.<domain>`)
   - `Personas`: employee accounts (M365/IdP users)
   - `Customers`: storefront customer test accounts
   - `Service & API`: API tokens, OAuth clients, HEC tokens, DB users
 - [ ] **[manual]** Create `Break-glass` (Cloudflare, M365 global admin, OCI root, automation passphrase) in the UI, shared with no one, so the automation user never has access.
-- [ ] Move the bootstrap credentials into the vault: `PASSBOLT_DB_PASSWORD` → `Service & API` (**[script]** `vault.mjs upsert`); Cloudflare login + 2FA recovery codes → `Break-glass` (**[manual]**).
+- [ ] Move the bootstrap credentials into the vault: `PASSBOLT_DB_PASSWORD` and the `vault-acme` token → `Service & API` (**[script]** `vault.mjs upsert`); Cloudflare login + 2FA recovery codes → `Break-glass` (**[manual]**).
+- **Offline fallback:** if Let's Encrypt isn't an option, mkcert can issue a locally trusted certificate (it installs its own CA into this machine's trust stores, so only this machine trusts it). Replace Traefik's resolver with a static certificate in `traefik/dynamic.yml`.
 - [ ] **[script]** `bash infra/compose/vault/backup.sh <dir-outside-repo>`; verify it; store the backup (DB dump + server GPG keys + JWT keys) encrypted/offline. Repeat after significant changes and monthly (Phase 14).
 - SMTP is configured in Phase 4. Until then, invites and email-based recovery don't work; that's fine for a single operator.
 - **Moving the vault later:** run `backup.sh` on the old host, `restore.sh` on the new host with the same `APP_FULL_BASE_URL`, then repoint DNS/hosts (e.g. a Cloudflare Tunnel hostname protected by Cloudflare Access). Users don't re-enroll because the URL is unchanged.

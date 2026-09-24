@@ -73,7 +73,7 @@ Done when the registration status is `succeeded`.
    | File | Keys |
    |---|---|
    | `apps/storefront/.env` | `COMPANY_NAME=<company name>`, `SITE_URL=https://www.<domain>` |
-   | `infra/compose/vault/.env` | `APP_FULL_BASE_URL=https://vault.<domain>` |
+   | `infra/compose/vault/.env` | `APP_FULL_BASE_URL=https://vault.<domain>`, `VAULT_HOST=vault.<domain>`, `ACME_EMAIL=<operator mailbox>` |
 
    If `infra/compose/vault/.env` already has a different `APP_FULL_BASE_URL` and the vault has been started (`docker compose ps` in that folder shows containers), stop and ask the operator: the vault URL is permanent once users enroll.
 5. Mark the chosen name and domain as `registered` in `local/names.md`.

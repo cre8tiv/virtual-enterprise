@@ -1,7 +1,10 @@
-# Operator vault: Passbolt Community Edition + MariaDB.
+# Operator vault: Passbolt Community Edition + MariaDB, behind Traefik for a trusted TLS certificate.
 # Runs first on the operator's machine, later on any Docker host (amd64 or arm64) via backup/restore.
 # APP_FULL_BASE_URL must be the permanent URL (https://vault.<domain>) from day one; changing it later
 # breaks every user's browser extension setup.
+#
+# TLS: Traefik obtains and renews a Let's Encrypt certificate for VAULT_HOST using the Cloudflare DNS-01
+# challenge, so no public DNS record or inbound port is needed and nothing is added to local trust stores.
 #
 #   cp .env.example .env        # fill in values (see SETUP.md Phase 2)
 #   docker compose up -d
@@ -48,11 +51,38 @@ services:
       - gpg-data:/etc/passbolt/gpg
       - jwt-data:/etc/passbolt/jwt
     command: ["/usr/bin/wait-for.sh", "-t", "0", "db:3306", "--", "/docker-entrypoint.sh"]
+    # Not published: only Traefik reaches Passbolt, over the internal network.
+
+  traefik:
+    image: traefik:${TRAEFIK_IMAGE_TAG:-v3}
+    restart: unless-stopped
+    depends_on:
+      - passbolt
+    command:
+      - --entrypoints.websecure.address=:443
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set in .env}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.caserver=${ACME_CA_SERVER:-https://acme-v02.api.letsencrypt.org/directory}
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+    environment:
+      VAULT_HOST: ${VAULT_HOST:?set in .env, e.g. vault.example.com}
+      CF_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:?set in .env}
+    volumes:
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - letsencrypt:/letsencrypt
     # HTTPS only: the extension and CLI never use port 80, so it isn't published (fewer local conflicts).
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${HTTPS_PORT:-443}:443"
+    networks:
+      default:
+        # Lets Passbolt reach its own public URL (healthcheck, self-requests) through Traefik.
+        aliases:
+          - ${VAULT_HOST:?set in .env}
 
 volumes:
   db-data:
   gpg-data:
   jwt-data:
+  letsencrypt:
