@@ -49,10 +49,25 @@ function passbolt(args) {
   const passphrase = readPassphrase();
   const out = execFileSync(
     'passbolt',
-    [...args, '--config', CONFIG, '--userPassword', passphrase, '--mfaMode', 'none', '--json'],
+    // `share` has no --json flag and prints plain text.
+    [...args, '--config', CONFIG, '--userPassword', passphrase, '--mfaMode', 'none', ...(args[0] === 'share' ? [] : ['--json'])],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  return out.trim() ? JSON.parse(out) : null;
+  return args[0] !== 'share' && out.trim() ? JSON.parse(out) : null;
+}
+
+/**
+ * Like passbolt() for list commands: the CLI exits non-zero with "no such ... found" on an empty result.
+ * @param {string[]} args
+ * @returns {any[]} parsed rows, or [] when nothing matched
+ */
+function passboltList(args) {
+  try {
+    return passbolt(args) || [];
+  } catch (err) {
+    if (/no such .* found/i.test(String(err.stderr || err.message))) return [];
+    throw err;
+  }
 }
 
 /** @param {string} value @returns {string} CEL string literal */
@@ -62,7 +77,7 @@ function cel(value) {
 
 /** @param {string} name @returns {{id: string} | undefined} */
 function findFolder(name) {
-  const folders = passbolt(['list', 'folder', '--filter', `name == ${cel(name)}`]) || [];
+  const folders = passboltList(['list', 'folder', '--filter', `name == ${cel(name)}`]);
   if (folders.length > 1) throw new Error(`More than one folder named "${name}"`);
   return folders[0];
 }
@@ -70,8 +85,9 @@ function findFolder(name) {
 /** @param {string} folderId @param {string} name @returns {{id: string} | undefined} */
 function findResource(folderId, name) {
   // Restrict columns so listing doesn't decrypt every secret.
-  const resources =
-    passbolt(['list', 'resource', '--folder', folderId, '--filter', `name == ${cel(name)}`, '-c', 'id', '-c', 'name']) || [];
+  const resources = passboltList([
+    'list', 'resource', '--folder', folderId, '--filter', `name == ${cel(name)}`, '-c', 'id', '-c', 'name',
+  ]);
   if (resources.length > 1) throw new Error(`More than one resource named "${name}" in the folder`);
   return resources[0];
 }
