@@ -114,13 +114,16 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 
 ## Phase 3: Email Catch-All (Cloudflare Email Routing)
 
-- [ ] **[manual]** Enable Email Routing on subdomain `svc.<domain>`. Cloudflare adds the MX + SPF records.
-- [ ] **[manual]** Add the operator mailbox as a destination address and verify it.
-- [ ] **[manual]** Create a catch-all rule for `*@svc.<domain>` that forwards to the operator mailbox.
-- [ ] **[script]** Add DMARC: `_dmarc.<domain>  TXT  "v=DMARC1; p=none; rua=mailto:dmarc@svc.<domain>"`.
-- [ ] Send a test email to a random `x@svc.<domain>` address and confirm it arrives.
-- [ ] **[script]** Create a scoped Cloudflare API token (Zone:DNS:Edit, Zone:Email Routing:Edit, Account:Cloudflare Tunnel:Edit) for automation; store it in `Service & API`.
-- **Record:** routing destination, API token name.
+**Agent-assisted:** run the `/setup-email-routing` skill; it configures routing through the `cloudflare` MCP, waits for the two manual steps, and resumes where a previous run stopped.
+
+- [ ] **[script]** Enable Email Routing on subdomain `svc.<domain>` **only**; Cloudflare adds and locks its MX + SPF records. The root domain's MX is reserved for M365 (Phase 4).
+- [ ] **[script]** Add the operator mailbox as a destination address. **[manual]** Click the verification link Cloudflare sends.
+- [ ] **[script]** Set the zone catch-all to forward to the operator mailbox, and add literal rules for addresses already in use (`dmarc@svc.<domain>`, `automation@svc.<domain>`).
+- [ ] **[script]** Add DMARC if absent: `_dmarc.<domain>  TXT  "v=DMARC1; p=none; rua=mailto:dmarc@svc.<domain>"`.
+- [ ] **[manual]** Send a test email to a random `phase3-test-…@svc.<domain>` address from a different mailbox and confirm it arrives.
+  - If it doesn't arrive but `dmarc@svc.<domain>` does, the catch-all doesn't cover the subdomain: switch to **per-address rules**, creating a literal rule for each `<system>-admin@svc.<domain>` before signing up with it (re-run the skill).
+- Cloudflare API tokens for scripts are created per purpose when a phase first needs one (e.g. `vault-acme` in Phase 2), each with least privilege. Agent work uses the `cloudflare` MCP.
+- **Record:** routing destination, Email Routing mode (`catch-all` or `per-address rules`), apex routing state if it had to be enabled.
 
 ## Phase 4: Microsoft 365 E5 Developer Sandbox
 
@@ -128,6 +131,7 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 - [ ] **[manual]** Join the M365 Developer Program with `m365-admin@svc.<domain>`.
 - [ ] **[manual]** Create a **configurable (empty)** E5 sandbox, not the instant one; see "Users" below. Store the global admin credentials in `Break-glass`.
 - [ ] **[manual]** Add `<domain>` as a custom domain in the M365 admin center.
+- [ ] **[script]** If **Email Routing apex** is `enabled` in the registry, disable Email Routing for the apex only (keep `svc.<domain>`) so its locked root MX records are released.
 - [ ] **[script]** Add the M365 DNS records in Cloudflare: verification TXT, root MX, SPF, autodiscover CNAME, DKIM CNAMEs (`selector1`/`selector2`). Root-domain mail cuts over to Exchange here; `svc.` stays on Cloudflare.
 - [ ] **[manual]** Complete domain verification; enable DKIM signing; set `<domain>` as the default domain.
 - [ ] **[script]** Create an Entra app registration for automation (Graph: `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`); store the client secret or certificate in `Service & API`.
@@ -297,6 +301,9 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Operator mailbox | | |
 | Cloudflare account ID | | |
 | Cloudflare zone ID | | |
+| Email routing destination | | |
+| Email Routing mode | | |
+| Email Routing apex | | |
 | Vault URL | `https://vault.<domain>` | |
 | Vault host | | |
 | Vault bind address | | |

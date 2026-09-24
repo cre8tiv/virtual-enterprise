@@ -15,9 +15,12 @@ docker compose up -d --wait db
 docker compose exec -T db sh -c 'exec mariadb -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < "$src/passbolt.sql"
 
 # Put the server keys in place before Passbolt's first start so it doesn't generate new ones.
+# Git Bash on Windows: docker.exe needs a Windows path (C:/...), not /c/...
+native="$src"
+if command -v cygpath >/dev/null 2>&1; then native="$(cygpath -m "$src")"; fi
 docker compose create passbolt
-docker compose cp "$src/gpg/." passbolt:/etc/passbolt/gpg
-docker compose cp "$src/jwt/." passbolt:/etc/passbolt/jwt
+docker compose cp "$native/gpg/." passbolt:/etc/passbolt/gpg
+docker compose cp "$native/jwt/." passbolt:/etc/passbolt/jwt
 docker compose start passbolt
 docker compose exec -T passbolt chown -R www-data:www-data /etc/passbolt/gpg /etc/passbolt/jwt
 docker compose restart passbolt
