@@ -27,7 +27,7 @@ The repo's `.mcp.json` defines project MCP servers for agent-assisted setup. It 
 | `godaddy` | Phase 1 (public domain availability and suggestions; read-only) | None | n/a |
 | `supabase` | Phases 9–11 (migrations, Edge Functions, SQL, logs) | OAuth | The environment's Supabase org |
 | `microsoft-learn` | Phases 4, 6 (Graph/Entra docs) | None | n/a |
-| `m365-sandbox` | Phases 4, 6 (users, licenses, SharePoint, Entra apps) | `m365 login` (CLI for Microsoft 365) | **The E5 sandbox tenant** |
+| `m365-sandbox` | Optional, ad-hoc sandbox queries (SharePoint, Teams). Provisioning uses `scripts/m365/` instead. | `m365 login` (CLI for Microsoft 365) | **The E5 sandbox tenant** |
 | `stripe` | Phases 9–10 (test-mode data) | OAuth | The environment's Stripe account, test mode |
 | `shopify-dev` | Phases 10–11 (API docs, GraphQL validation) | None | n/a |
 
@@ -127,33 +127,35 @@ Stack: `infra/compose/vault/` (Passbolt Community Edition + MariaDB). It starts 
 
 ## Phase 4: Microsoft 365 E5 Developer Sandbox
 
-- [ ] **[manual]** Confirm eligibility (Visual Studio Pro/Enterprise subscription or partner benefit).
-- [ ] **[manual]** Join the M365 Developer Program with `m365-admin@svc.<domain>`.
-- [ ] **[manual]** Create a **configurable (empty)** E5 sandbox, not the instant one; see "Users" below. Store the global admin credentials in `Break-glass`.
-- [ ] **[manual]** Add `<domain>` as a custom domain in the M365 admin center.
+**Agent-assisted:** run the `/setup-m365` skill; it runs the scripts, creates DNS records through the `cloudflare` MCP, guides the portal steps, and resumes where a previous run stopped. Re-run it after editing `canonical/org/` to re-sync the tenant.
+
+Graph work runs through `scripts/m365/` as the `ve-provisioning` app registered **inside the sandbox**, never through the `m365` CLI, whose single active connection is shared with the operator's other tenants. Every script checks the token's tenant against **M365 tenant ID** in the registry.
+
+- [ ] **[manual]** Confirm eligibility (Visual Studio Pro/Enterprise subscription or partner benefit). Join the M365 Developer Program with `m365-admin@svc.<domain>` and create a **configurable (empty)** E5 sandbox, not the instant one (see "Users" below). Store the global admin credentials in `Break-glass`; record tenant ID, tenant name, and sandbox expiry.
+- [ ] **[manual]** Register the Entra app `ve-provisioning` (single tenant; Graph application permissions `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`, `Domain.ReadWrite.All`, `Organization.Read.All`; admin consent; client secret). Save it in Passbolt `Service & API` as `Entra app: ve-provisioning` (username = client ID, password = secret).
+- [ ] **[script]** Add and verify `<domain>` (`node scripts/m365/domain.mjs add|status|verify|default`); the verification TXT record goes into Cloudflare.
 - [ ] **[script]** If **Email Routing apex** is `enabled` in the registry, disable Email Routing for the apex only (keep `svc.<domain>`) so its locked root MX records are released.
-- [ ] **[script]** Add the M365 DNS records in Cloudflare: verification TXT, root MX, SPF, autodiscover CNAME, DKIM CNAMEs (`selector1`/`selector2`). Root-domain mail cuts over to Exchange here; `svc.` stays on Cloudflare.
-- [ ] **[manual]** Complete domain verification; enable DKIM signing; set `<domain>` as the default domain.
-- [ ] **[script]** Create an Entra app registration for automation (Graph: `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`); store the client secret or certificate in `Service & API`.
-- [ ] **[script]** Provision persona users (see below).
-- [ ] **[script]** Create shared mailbox `ops@<domain>`; switch the Cloudflare catch-all destination to it.
-- [ ] **[script]** Configure outbound SMTP for Passbolt (`EMAIL_*` in `infra/compose/vault/.env`, then `docker compose up -d`); send a test email from Administration → Email server. See DESIGN.md §10 on the SMTP relay choice.
-- [ ] **[script]** Confirm plus-addressing is enabled (`Get-OrganizationConfig | Select AllowPlusAddressInRecipients`).
-- [ ] Tighten DMARC to `p=quarantine`.
-- [ ] Set a renewal reminder (sandbox expires every 90 days unless there is qualifying activity).
-- **Record:** tenant ID, tenant name, persona roster version, renewal date.
+- [ ] **[script]** Create the service records from `domain.mjs status` in Cloudflare, **DNS only**: root MX, SPF, autodiscover, plus Teams and Intune records. Root-domain mail cuts over to Exchange here; `svc.` stays on Cloudflare.
+- [ ] **[manual]** DKIM: read the two selector CNAMEs in the Defender portal (the **[script]** step creates them in Cloudflare), then enable signing.
+- [ ] **[script]** Provision the org model (see below): `node scripts/m365/provision.mjs` (plan), then `--apply`. If the sandbox admin holds an E5 license, remove it first so all 25 personas get one.
+- [ ] **[manual]** Create shared mailbox `ops@<domain>` (full access: `it-director`, `sysadmin`). Test by sending external mail to `ops+phase4@<domain>` (proves root delivery and plus-addressing).
+- [ ] **[script]** Add `ops@<domain>` as a Cloudflare destination (**[manual]** click its verification email), then point the catch-all and literal rules at it.
+- [ ] Tighten DMARC to `p=quarantine` once DKIM is enabled and the test mail passed.
+- **Deferred:** Passbolt SMTP (no spare licensed mailbox for SMTP AUTH, and basic SMTP AUTH is being retired; see DESIGN.md §10 SMTP relay) and the persona MFA policy (Phase 6).
+- Set a renewal reminder (sandbox expires every 90 days unless there is qualifying activity; the app secret also expires).
+- **Record:** tenant ID, tenant name, sandbox expiry, `ve-provisioning` secret expiry, persona roster version.
 
 ### Users: provision from the roster; don't import sample users
 
 Entra ID **cannot export existing passwords**, so pre-provisioned sample users (instant sandbox) can't be "imported" into the vault without resetting them. They are also generic sample personas, not the canonical employees. Instead:
 
 1. The persona roster comes from `canonical/org/personas.yaml` (25 personas: name, title, department, site, manager, groups; UPN `{first}.{last}@<domain>`), and groups from `canonical/org/groups.yaml` (DESIGN.md §2.1).
-2. For each persona, a script:
-   - generates a strong random password;
-   - creates the user via Microsoft Graph (`passwordProfile.forceChangePasswordNextSignIn = false`) and assigns an E5 license (max 25 licensed; the rest stay unlicensed identities);
-   - writes the credential to the `Personas` group via the vault adapter, with UPN, URL, and tags (department, persona role).
+2. `scripts/m365/provision.mjs` creates the catalog groups (security groups), then for each persona:
+   - generates a strong random password and stores it in the vault's `Personas` folder (resource name = UPN) **before** creating the user, so a crash never leaves an unknown password;
+   - creates the user via Microsoft Graph (`forceChangePasswordNextSignIn = false`) with title, department, site, usage location, employee ID, and hire date;
+   - adds group memberships and the manager. Licensing is group-based: the E5 license is assigned to `app-m365`, whose members are the 25 licensed personas. The rest of the employees stay unlicensed identities.
 3. **MFA:** new tenants enable security defaults, which force MFA registration. Either register a TOTP authenticator per persona and store the seed in the persona's vault entry (Passbolt supports TOTP; this enables unattended persona logins for tests), or use Conditional Access to exempt a test group (Entra P1, included in E5).
-4. The script is idempotent: an existing user is skipped, or reset and re-vaulted with `--rotate`.
+4. The script is idempotent: it plans from live state, fixes attribute drift, adds missing memberships (`--prune` also removes stale ones), and resets and re-vaults a password only with `--rotate <upn|all>`.
 
 ## Phase 5: Infrastructure
 
@@ -309,7 +311,10 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Vault bind address | | |
 | Vault backup location | | |
 | Vault automation user | `automation@svc.<domain>` | |
-| M365 tenant | | 90-day |
+| M365 tenant ID | | 90-day |
+| M365 tenant name | | |
+| ve-provisioning secret | | |
+| Persona roster version | | |
 | OCI tenancy / region | | |
 | OCI VMs | | Idle reclamation |
 | Autonomous DB | | |

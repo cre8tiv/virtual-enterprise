@@ -1,0 +1,12 @@
+{
+  "name": "virtual-enterprise-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Provisioning scripts for the virtual enterprise. Install with: npm install --prefix scripts",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  }
+}

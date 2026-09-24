@@ -183,6 +183,8 @@ scripts/              provisioning scripts, vault adapter
   prereqs/            operator-machine prerequisite check/install (prereqs.ps1, prereqs.sh)
   vault/              vault adapter (vault.mjs) over go-passbolt-cli
   env/                idempotent .env writer (set-env.mjs)
+  lib/                registry.mjs (local/registry.md get/set), org.mjs (org model loader)
+  m365/               Graph client, domain.mjs, provision.mjs (org model → M365 sandbox)
 local/                gitignored: registry, operator notes
 .mcp.json             project MCP servers for agent-assisted setup (no secrets)
 .claude/skills/       agent skills that run SETUP.md phases (e.g. setup-prerequisites)
@@ -290,6 +292,8 @@ Entries are append-only; later entries supersede earlier ones.
 | 2026-09-23 | Vault TLS = Let's Encrypt via Cloudflare DNS-01, terminated by Traefik in the vault stack; mkcert only as offline fallback | Self-signed certificates broke TOTP enrollment. DNS-01 works for a hosts-file-only name, is trusted everywhere (browsers, extension, Go CLI, Node) with no trust-store changes, auto-renews, and survives moving the vault. mkcert would trust only one machine and modify its trust stores. |
 | 2026-09-24 | Phase 3 automated via `setup-email-routing` skill (Cloudflare MCP); delivery proven by test, with per-address rules as fallback | Unclear whether the zone catch-all covers subdomain addresses; sign-up addresses are known in advance, so literal rules always work. Generic "automation" Cloudflare API token dropped: tokens are created per purpose, least privilege, when a script needs one. |
 | 2026-09-24 | Org model as hand-authored YAML in `canonical/org/`: 9 departments, group catalog, 25 personas = 25 E5 licenses; ~375 generated employees | Defined before provisioning because every IdP, group, SCIM scope, and permission test derives from it. Each persona carries a test purpose, so coverage is deliberate. |
+| 2026-09-24 | Phase 4 automated via `setup-m365` skill; Graph work through `scripts/m365/` (domain, provision) as a sandbox-local app `ve-provisioning`, not the `m365` CLI | The CLI keeps one active connection per OS user, and `m365 setup` writes global config, so it could act on the operator's production tenant. A tenant-local app plus a token-tenant check makes wrong-tenant writes impossible. DNS goes through the Cloudflare MCP. Group-based E5 licensing on `app-m365`. `yaml` is the one npm dependency (local to `scripts/`). |
+| 2026-09-24 | Passbolt SMTP and persona MFA policy deferred out of Phase 4 | All 25 E5 licenses go to personas, leaving no mailbox for SMTP AUTH (and basic SMTP AUTH is being retired); the MFA approach belongs with the identity work in Phase 6. |
 | 2026-09-23 | Remove Vaultwarden from the stack | Avoid two password managers; the operator vault must not double as a company system exposed to the SUT. |
 
 ## 10. Open Questions & Risks
