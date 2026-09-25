@@ -83,4 +83,12 @@ Only if the operator wants Splunk reachable without the SUT's gateway (SQL Serve
 
 ### 8. Report
 
-Summarize the host, versions, smoke-test results, license state and expiry, and tunnel (if any). The `Operations` tables are loaded in Phase 10; Splunk ingestion is wired in Phase 8. Next step: **Phase 5a** (`/setup-cloud-site`) if not done, else **Phase 6: Workforce Identity**.
+Summarize the host, versions, smoke-test results, license state and expiry, and tunnel (if any). Then tell the operator how to sign in, in plain steps:
+
+- **Splunk web UI:** `http://<BIND_ADDR>:8000` (it may redirect to HTTPS; accept the self-signed certificate). Username `admin`. The password is in Passbolt, folder `Service & API`, item **`On-prem Splunk: admin`** (also `SPLUNK_PASSWORD` in `infra/compose/onprem/.env`). Splunk's welcome tour can be skipped. With `BIND_ADDR=127.0.0.1` the UI works only from the host itself, unless the tunnel from step 7 exists (`https://siem.<domain>`, behind Cloudflare Access).
+- **Splunk REST API:** `https://<BIND_ADDR>:8089`, same `admin` account.
+- **Splunk HEC (event ingest):** `https://<BIND_ADDR>:8088`, no username; it uses the token in Passbolt item **`On-prem Splunk: HEC token`** (`Authorization: Splunk <token>`).
+- **SQL Server:** `<BIND_ADDR>,1433`. `sa` (item **`On-prem SQL Server: sa`**) is for administration only; the SUT reads with `sut_reader` (item **`On-prem SQL Server: sut_reader`**), which is read-only on `Operations`.
+- **Try it:** search `index=onprem sourcetype=ve:smoke` in Splunk to see the smoke-test event.
+
+The `Operations` tables are loaded in Phase 10; Splunk ingestion is wired in Phase 8. Next step: **Phase 5a** (`/setup-cloud-site`) if not done, else **Phase 6: Workforce Identity**.
