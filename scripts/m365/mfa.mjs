@@ -183,15 +183,36 @@ const needsEnforcement = securityDefaults.isEnabled ||
 if (needsEnforcement && !allActivated) {
   console.log('  ! Conditional Access stays off until every persona has an activated token (re-run after tokens activate)');
 } else if (needsEnforcement) {
+  // Enable the policies first and only then drop security defaults, so there is never a moment without MFA.
+  // A policy created a moment ago can 404 until Graph catches up, hence retry404.
+  for (const policy of desiredPolicies) {
+    if (policyIds.get(policy.displayName)?.state === 'enabled') continue;
+    await step(`enable "${policy.displayName}"`, () =>
+      graph('PATCH', `/identity/conditionalAccess/policies/${policyIds.get(policy.displayName).id}`, { state: 'enabled' },
+        { retry404: true }));
+  }
   if (securityDefaults.isEnabled) {
     await step('turn off security defaults (replaced by the VE Conditional Access policies)', () =>
       graph('PATCH', '/policies/identitySecurityDefaultsEnforcementPolicy', { isEnabled: false }));
   }
-  for (const policy of desiredPolicies) {
-    if (policyIds.get(policy.displayName)?.state === 'enabled') continue;
-    await step(`enable "${policy.displayName}"`, () =>
-      graph('PATCH', `/identity/conditionalAccess/policies/${policyIds.get(policy.displayName).id}`, { state: 'enabled' }));
-  }
+}
+
+// The default registration campaign nags every user to register a passkey, and the sign-in screen has no skip
+// button. The hardware tokens already satisfy MFA, so turn the campaign off.
+const methodsPolicy = await graph('GET', '/policies/authenticationMethodsPolicy');
+const campaign = methodsPolicy.registrationEnforcement?.authenticationMethodsRegistrationCampaign;
+if (campaign && campaign.state !== 'disabled') {
+  await step('turn off the authentication methods registration campaign (passkey nag)', () =>
+    graph('PATCH', '/policies/authenticationMethodsPolicy', {
+      registrationEnforcement: {
+        authenticationMethodsRegistrationCampaign: {
+          state: 'disabled',
+          snoozeDurationInDays: 1,
+          excludeTargets: [],
+          includeTargets: [{ id: 'all_users', targetType: 'group', targetedAuthenticationMethod: 'microsoftAuthenticator' }],
+        },
+      },
+    }));
 }
 console.log(`  Break-glass exclusions (Global Administrators): ${breakGlass.length}`);
 console.log(changes ? `${changes} change(s) ${APPLY ? 'applied' : 'planned; re-run with --apply'}` : 'No changes: MFA matches the policy');

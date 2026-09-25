@@ -49,7 +49,9 @@ Done when the plan prints `No changes`: 25 activated tokens, both `VE -` policie
 
 In a private browser window, the operator signs in at https://myapps.microsoft.com/ as the `it-director` persona: password from Passbolt `Personas` (resource named by the UPN), then the verification code from `node scripts/lib/totp.mjs code <it-director UPN>`. If a method choice appears, pick the hardware token / verification code.
 
-Done when the sign-in succeeds with the code and no "register MFA" prompt. If a registration prompt appears, check Entra → Protection → Authentication methods → Registration campaign and turn it off for all users (the tokens already satisfy MFA).
+Codes last 30 seconds: run `totp.mjs code` when the operator is at the code prompt (or when asked), and if `(N s left)` is under about 12, wait for the next one. `mfa.mjs` turns the **authentication methods registration campaign** off (it otherwise nags every user to register a passkey, and that screen has no skip button); a browser window opened before that change can still show the stale prompt, so close it and sign in again in a new private window.
+
+Done when the sign-in succeeds with the code and no "register MFA" or passkey prompt. If one still appears, check Entra → Protection → Authentication methods → Registration campaign and turn it off for all users (the tokens already satisfy MFA).
 
 ### 6. Finish Phase 4's deferred email items
 
