@@ -1,8 +1,12 @@
-# Cloud site stack (OCI A1 VM, arm64). Phase 5a starts only the Cloudflare Tunnel connector; later phases add
-# services (authentik in Phase 6, Odoo in Phase 7) to this file and publish them by adding public hostnames to
-# the tunnel's ingress (http://<service>:<port> on this compose network). Nothing listens on the host.
+# Cloud site stack (OCI A1 VM, arm64). Services are published only through the Cloudflare Tunnel: each public
+# hostname in the tunnel's ingress points at http://<service>:<port> on this compose network. Nothing listens
+# on the host.
 #
-#   cp .env.example .env    # CLOUDFLARE_TUNNEL_TOKEN (see SETUP.md Phase 5a)
+#   Phase 5a: cloudflared
+#   Phase 6b: authentik (sso.<domain> -> http://authentik-server:9000)
+#   Phase 7:  Odoo (hr.<domain>)
+#
+#   cp .env.example .env    # values synced from the vault (SETUP.md)
 #   docker compose up -d
 
 name: cloud
@@ -14,3 +18,58 @@ services:
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set in .env}
+
+  # --- authentik (primary workforce IdP). 2025.10+ needs only PostgreSQL (no Redis). -----------------------
+  authentik-postgresql:
+    image: postgres:${AUTHENTIK_POSTGRES_IMAGE_TAG:-16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS:?set in .env}
+    volumes:
+      - authentik-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_IMAGE_TAG:-2025.10}
+    restart: unless-stopped
+    command: server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set in .env}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS:?set in .env}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      # Bootstrap values apply only on the very first start (empty database).
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:?set in .env}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:?set in .env}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:?set in .env}
+    volumes: &authentik-volumes
+      - authentik-data:/data
+      - authentik-media:/media
+      - authentik-templates:/templates
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_IMAGE_TAG:-2025.10}
+    restart: unless-stopped
+    command: worker
+    environment: *authentik-env
+    volumes: *authentik-volumes
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+
+volumes:
+  authentik-db:
+  authentik-data:
+  authentik-media:
+  authentik-templates:
