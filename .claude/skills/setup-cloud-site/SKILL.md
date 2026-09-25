@@ -37,7 +37,7 @@ Skip to step 3 if the registry has **OCI tenancy / region**.
 
 1. **API key:** if `~/.config/virtual-enterprise/oci_api_key.pem` doesn't exist, the operator opens Profile → My profile → API keys → Add API key → **Generate API key pair**, downloads the private key to that path, clicks Add, and reads you the configuration preview (user OCID, fingerprint; not secret). Keep a vault copy:
    `node scripts/vault/vault.mjs upsert "Service & API" "OCI API key: terraform" --username <user OCID> --description "fingerprint <fp>" --password "<base64 of the .pem>"` (PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$HOME\.config\virtual-enterprise\oci_api_key.pem"))`; bash: `base64 -w0 <file>`).
-2. **SSH key:** if `~/.config/virtual-enterprise/cloud_ssh` doesn't exist, create it (Git Bash: `ssh-keygen -t ed25519 -N '' -C ve-cloud -f ~/.config/virtual-enterprise/cloud_ssh`), restrict its permissions, and vault a base64 copy as `"SSH key: cloud site"` in `Service & API`.
+2. **SSH key:** if `~/.config/virtual-enterprise/cloud_ssh` doesn't exist, create it with an **empty** passphrase from Git Bash (`ssh-keygen -t ed25519 -N '' -C ve-cloud -f ~/.config/virtual-enterprise/cloud_ssh`). Don't create it from PowerShell: `-N '""'` there sets the passphrase to the two literal quote characters, the key then can't be used non-interactively, and the VM rejects it with `Permission denied (publickey)`. Confirm it has no passphrase with `ssh-keygen -y -P '' -f <key>` (it must print the public key). Restrict its permissions, then vault a base64 copy as `"SSH key: cloud site"` in `Service & API`. To repair a key that already has a stray passphrase, grant write access temporarily and run `cmd /c "ssh-keygen -p -P ""\""\"""" -N """" -f ""<key>"""` (the public key on the VM stays valid), then relock and re-vault it with `--rotate`.
 
 Done when both key files exist and both vault resources exist.
 
@@ -71,14 +71,14 @@ Done when Docker and Compose versions print.
 ### 7. Tunnel `cloud`
 
 1. Use the `cloudflare` MCP to look for a tunnel named `cloud` in the account.
-2. **Missing:** the operator creates it (Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared → name `cloud`), copies the token from the install command (the string after `--token`), and pastes it into `infra/compose/cloud/.env` as `CLOUDFLARE_TUNNEL_TOKEN=...` (create the file from `.env.example`). They skip the "route traffic" step; hostnames come in later phases.
+2. **Missing:** the operator creates it (Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared → name `cloud`), copies the token from the install command (the string after `--token`), and pastes it into `infra/compose/cloud/.env` as `CLOUDFLARE_TUNNEL_TOKEN=...` (create the file from `.env.example`). They skip the "route traffic" step; hostnames come in later phases. **Validate the value without printing it** before syncing: the token is one line of about 180 characters starting `eyJ`, with no spaces or quotes. A 36-character UUID is the tunnel ID, a common mix-up, and cloudflared then loops on "Provided Tunnel token is not valid". If the wrong value was already vaulted, `secret-env.mjs` stops on the mismatch; fix the vault item with `vault.mjs upsert ... --rotate` after the operator corrects `.env`.
 3. Sync the token with the vault: `node scripts/env/secret-env.mjs infra/compose/cloud/.env CLOUDFLARE_TUNNEL_TOKEN "Service & API" "Cloudflare tunnel: cloud"`. This also restores the `.env` value from the vault on a fresh clone.
 4. Deploy:
    `ssh ... ubuntu@<ip> "mkdir -p /opt/ve/cloud"`
    `scp -i ~/.config/virtual-enterprise/cloud_ssh infra/compose/cloud/docker-compose.yml infra/compose/cloud/.env ubuntu@<ip>:/opt/ve/cloud/`
    `ssh ... ubuntu@<ip> "chmod 600 /opt/ve/cloud/.env && cd /opt/ve/cloud && docker compose up -d"`
 5. Verify the connector: the MCP shows the tunnel healthy with active connections, or `docker compose logs --tail 20 cloudflared` on the VM shows "Registered tunnel connection".
-6. **End-to-end check:** through the MCP, add the ingress rule `hello-cloud.<domain>` → `hello_world` (the rule list must end with the catch-all `http_status:404`) and a proxied CNAME `hello-cloud` → `<tunnel ID>.cfargotunnel.com`. Confirm `https://hello-cloud.<domain>` answers, then remove the rule and the DNS record.
+6. **End-to-end check** (the machine's own resolver may not know the new name for several minutes; test with `curl --doh-url https://cloudflare-dns.com/dns-query <url>` instead of waiting): through the MCP, add the ingress rule `hello-cloud.<domain>` → `hello_world` (the rule list must end with the catch-all `http_status:404`) and a proxied CNAME `hello-cloud` → `<tunnel ID>.cfargotunnel.com`. Confirm `https://hello-cloud.<domain>` answers, then remove the rule and the DNS record.
 7. Record the tunnel ID in **Cloudflare Tunnel IDs (cloud / onprem)**.
 
 Done when the connector is healthy and the hello check passed.
