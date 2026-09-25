@@ -112,7 +112,7 @@ Shopify webhooks ──> Supabase Edge Function ──> orders mirror + GA4 Meas
 | Services | authentik, Odoo, Postgres | SQL Server, Splunk Enterprise |
 | Host | OCI Always Free Ampere A1 (arm64; 4 OCPU / 24 GB total; verify current limits) | Any x86_64 Docker host on a private network, e.g. a VM with no public IP (VS subscription Azure credits) or a physical/Hyper-V box |
 | Provisioning | Terraform (`infra/oci/`) + Compose (`infra/compose/cloud/`) | Compose (`infra/compose/onprem/`) |
-| Inbound | None; published via Cloudflare Tunnel | None |
+| Inbound | None, except optional SSH from `admin_cidrs` (operator IP) for deployments; services published via Cloudflare Tunnel | None |
 | SUT access | Public HTTPS hostnames | **SUT on-prem gateway/agent** (outbound-only) is the primary path; Cloudflare Tunnel optional for direct access |
 
 **Cloud site constraints (OCI):**
@@ -182,7 +182,7 @@ infra/
 scripts/              provisioning scripts, vault adapter
   prereqs/            operator-machine prerequisite check/install (prereqs.ps1, prereqs.sh)
   vault/              vault adapter (vault.mjs) over go-passbolt-cli
-  env/                idempotent .env writer (set-env.mjs)
+  env/                idempotent .env writer (set-env.mjs), .env ↔ vault secret sync (secret-env.mjs)
   lib/                registry.mjs (local/registry.md get/set), org.mjs (org model loader)
   m365/               Graph client, domain.mjs, cleanup.mjs, provision.mjs (org model → M365 sandbox)
 local/                gitignored: registry, operator notes
@@ -293,6 +293,8 @@ Entries are append-only; later entries supersede earlier ones.
 | 2026-09-24 | Phase 3 automated via `setup-email-routing` skill (Cloudflare MCP); delivery proven by test, with per-address rules as fallback | Unclear whether the zone catch-all covers subdomain addresses; sign-up addresses are known in advance, so literal rules always work. Generic "automation" Cloudflare API token dropped: tokens are created per purpose, least privilege, when a script needs one. |
 | 2026-09-24 | Org model as hand-authored YAML in `canonical/org/`: 9 departments, group catalog, 25 personas = 25 E5 licenses; ~375 generated employees | Defined before provisioning because every IdP, group, SCIM scope, and permission test derives from it. Each persona carries a test purpose, so coverage is deliberate. |
 | 2026-09-24 | Phase 4 automated via `setup-m365` skill; Graph work through `scripts/m365/` (domain, provision) as a sandbox-local app `ve-provisioning`, not the `m365` CLI | The CLI keeps one active connection per OS user, and `m365 setup` writes global config, so it could act on the operator's production tenant. A tenant-local app plus a token-tenant check makes wrong-tenant writes impossible. DNS goes through the Cloudflare MCP. Group-based E5 licensing on `app-m365`. `yaml` is the one npm dependency (local to `scripts/`). |
+| 2026-09-24 | Phase 5 automated via two skills: `setup-cloud-site` (5a: Terraform in `infra/oci/`) and `setup-onprem-site` (5b: this machine or a remote x86 host over SSH) | Sites are independent. Cloud VM gets a public IP with a security list closed except SSH from `admin_cidrs` (simpler than Bastion or SSH-over-Tunnel, which would add tools); the $1 budget alert is Terraform-managed; the Autonomous DB waits for Phase 10. Tunnel tokens are created in the Zero Trust dashboard and pasted into `.env` by the operator (they'd appear in the conversation if created via MCP); ingress and DNS go through the MCP. |
+| 2026-09-24 | `scripts/env/secret-env.mjs` keeps each generated secret consistent between a gitignored `.env` and the vault | Generated once, vault first; restored from the vault on a fresh clone or new host; mismatches stop instead of overwriting, since SQL Server and Splunk keep the password from first start. |
 | 2026-09-24 | Existing sandboxes (including instant ones with sample users) are adopted and cleaned with `scripts/m365/cleanup.mjs`, not recreated | Recreating isn't practical: a deleted sandbox means a 60–90 day wait, and a second account must itself be eligible. Cleanup deletes and purges unmanaged users and groups (protecting personas, directory-role holders, `ops@`), freeing licenses for the personas. |
 | 2026-09-24 | Passbolt SMTP and persona MFA policy deferred out of Phase 4 | All 25 E5 licenses go to personas, leaving no mailbox for SMTP AUTH (and basic SMTP AUTH is being retired); the MFA approach belongs with the identity work in Phase 6. |
 | 2026-09-24 | `ops@<domain>` routing switch and DMARC tightening deferred from Phase 4 to Phase 6 | Making `ops@` a Cloudflare destination needs someone to read its verification email, which means a persona sign-in, and that hits the forced MFA registration. Routing keeps forwarding to the operator mailbox and DMARC stays `p=none` until the persona MFA policy is decided. Root-domain delivery is proven with a message trace instead. |

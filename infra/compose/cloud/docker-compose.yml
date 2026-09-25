@@ -1,0 +1,16 @@
+# Cloud site stack (OCI A1 VM, arm64). Phase 5a starts only the Cloudflare Tunnel connector; later phases add
+# services (authentik in Phase 6, Odoo in Phase 7) to this file and publish them by adding public hostnames to
+# the tunnel's ingress (http://<service>:<port> on this compose network). Nothing listens on the host.
+#
+#   cp .env.example .env    # CLOUDFLARE_TUNNEL_TOKEN (see SETUP.md Phase 5a)
+#   docker compose up -d
+
+name: cloud
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:${CLOUDFLARED_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set in .env}

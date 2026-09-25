@@ -1,0 +1,15 @@
+#cloud-config
+# Bootstrap for the cloud site VM (Ubuntu 24.04 arm64): Docker + Compose, automatic security updates,
+# and a working directory for the compose stacks. The OCI Ubuntu image already disables password SSH.
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+runcmd:
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  - mkdir -p /opt/ve
+  - chown ubuntu:ubuntu /opt/ve
+  - touch /var/lib/cloud/instance/ve-bootstrap-done

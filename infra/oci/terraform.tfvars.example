@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (gitignored). Non-secret values only; the private key stays in a file outside the repo.
+tenancy_ocid        = "ocid1.tenancy.oc1..."
+user_ocid           = "ocid1.user.oc1..."
+fingerprint         = "aa:bb:cc:..."
+private_key_path    = "~/.config/virtual-enterprise/oci_api_key.pem"
+region              = "us-ashburn-1"
+ssh_public_key_path = "~/.config/virtual-enterprise/cloud_ssh.pub"
+budget_alert_email  = "operator@example.com"
+
+# SSH from your current public IP only (re-apply when it changes); [] closes inbound entirely.
+admin_cidrs = []
+
+# availability_domain_index = 0   # try 1 or 2 on "Out of host capacity"
+# create_autonomous_db      = false

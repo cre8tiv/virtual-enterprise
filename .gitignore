@@ -8,6 +8,7 @@ local/
 backups/
 *.pem
 terraform.tfvars
+tfplan
 *.tfstate
 *.tfstate.*
 .terraform/

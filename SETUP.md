@@ -164,33 +164,34 @@ Entra ID **cannot export existing passwords**, so pre-provisioned sample users (
 
 ## Phase 5: Infrastructure
 
+5a and 5b are independent; do them in either order. Secrets for both sites sync between gitignored `.env` files and the vault with `scripts/env/secret-env.mjs` (generated once, vault first, restored from the vault on a fresh clone).
+
 ### 5a. Cloud site (OCI Always Free)
 
-- [ ] **[manual]** Create an OCI account with `oci-admin@svc.<domain>`; choose the home region deliberately (permanent; check A1 capacity). Store root credentials in `Break-glass`.
-- [ ] **[manual]** Upgrade to Pay-As-You-Go to avoid idle reclamation; create a budget alert at $1.
-- [ ] **[script]** Create an API signing key for Terraform; store it in `Service & API`.
-- [ ] **[script]** `terraform apply` in `infra/oci/`: VCN, private subnet, A1 VM(s) (Ubuntu arm64, 4 OCPU / 24 GB total), block volumes, Autonomous DB. No public ingress rules.
-- [ ] **[script]** Bootstrap VMs (cloud-init): Docker Engine + Compose, SSH keys only (key in vault), automatic security updates.
-- [ ] **[script]** Clone the repo onto each VM; render `infra/compose/cloud/.env` from the vault adapter.
-- [ ] **[script]** Create Cloudflare Tunnel `cloud`; run `cloudflared`; map `sso.`, `hr.` to local services (and `vault.`, if the vault moves here; see Phase 2).
-- [ ] **[manual]** (Optional) Put admin UIs behind Cloudflare Access (Zero Trust free tier).
-- **Record:** OCI tenancy OCID, region, VM names, tunnel ID, hostname → service map, Autonomous DB name.
+**Agent-assisted:** run the `/setup-cloud-site` skill; it drives Terraform (plan, then apply on your yes), bootstraps the VM, and connects the tunnel through the `cloudflare` MCP.
+
+- [ ] **[manual]** Create an OCI account with `oci-admin@svc.<domain>` (card verification). Choose the home region deliberately: it's permanent, and Always Free A1 capacity exists only there. Store root credentials in `Break-glass`; enable MFA.
+- [ ] **[manual]** Upgrade to Pay-As-You-Go: Always Free stays $0, but free-tier accounts lose idle instances, and PAYG gets A1 capacity more easily.
+- [ ] **[manual]** Generate an API signing key (Profile → My profile → API keys) and save it to `~/.config/virtual-enterprise/oci_api_key.pem`. **[script]** Create the VM SSH key `~/.config/virtual-enterprise/cloud_ssh`; vault copies of both.
+- [ ] **[script]** Write `infra/oci/terraform.tfvars` (from `.example`; no secrets), then `terraform plan` / `apply` in `infra/oci/`: compartment, **$1 budget alert** to the operator mailbox, VCN + subnet with **no inbound** except optional SSH from `admin_cidrs` (your IP while setting up), one A1 VM (Ubuntu 24.04 arm64, 4 OCPU / 24 GB, 100 GB boot). The Autonomous DB is off until Phase 10 (`create_autonomous_db`). On "Out of host capacity", try another `availability_domain_index` or retry later.
+- [ ] **[script]** cloud-init installs Docker + Compose and unattended upgrades; wait for `cloud-init status --wait`.
+- [ ] **[manual]** Create tunnel `cloud` in Zero Trust → Networks → Tunnels, and paste its token into `infra/compose/cloud/.env` (the token never goes through the agent). **[script]** Vault it, copy `infra/compose/cloud/` to `/opt/ve/cloud` on the VM, `docker compose up -d`, and prove it end to end with a temporary `hello-cloud.<domain>` → `hello_world` route.
+- Services join `infra/compose/cloud/` in later phases (authentik: Phase 6, Odoo: Phase 7) and get public hostnames on this tunnel (plus `vault.` if the vault moves here; see Phase 2). Put admin UIs behind Cloudflare Access (Zero Trust free tier) when they're added.
+- **Record:** OCI tenancy OCID and region, VM name and IP, tunnel ID. Keep a copy of `infra/oci/terraform.tfstate` with the vault backups.
 
 ### 5b. On-prem site (x86 Docker host)
 
+**Agent-assisted:** run the `/setup-onprem-site` skill; it deploys the stack on this machine or a remote host over SSH, smoke-tests it end to end, and applies the Splunk license.
+
 Stack: `infra/compose/onprem/` (SQL Server 2022 Developer, Splunk Enterprise, optional `cloudflared`).
 
-- [ ] **[manual]** Provision an x86_64 host on a private network with **no public IP / no inbound rules** (~4 vCPU, 16 GB RAM, 100+ GB disk). Options: cloud VM in an isolated network (e.g. VS subscription Azure credits, with an auto-shutdown schedule) or a physical/Hyper-V machine.
-- [ ] **[script]** Install Docker Engine + Compose; SSH keys only (key in vault); automatic security updates.
-- [ ] **[script]** Clone the repo; render `infra/compose/onprem/.env` from `.env.example` using the vault adapter:
-  - `MSSQL_SA_PASSWORD`, `SUT_READER_PASSWORD`, `SPLUNK_PASSWORD`: generated, stored in `Service & API`
-  - `SPLUNK_HEC_TOKEN`: generated GUID, stored in `Service & API`
-  - `BIND_ADDR`: `127.0.0.1` if the SUT gateway runs on this host, otherwise the host's LAN IP
-- [ ] **[script]** `docker compose up -d` in `infra/compose/onprem/`. `sqlserver-init` creates the `Operations` DB and the read-only `sut_reader` login; Splunk loads the `ve_indexes` app (`idp`, `app`, `network`, `cloudflare`, `onprem`, `sut_audit`).
-- [ ] **[manual]** Obtain a Splunk Enterprise developer license with `splunk-admin@svc.<domain>`; apply it (Settings → Licensing, or `splunk add licenses`). Set a renewal reminder.
-- [ ] Smoke test: `sqlcmd -S localhost -U sut_reader -C -Q "SELECT DB_NAME()" -d Operations`; Splunk web on `:8000`; HEC `curl -k https://localhost:8088/services/collector/health`.
-- [ ] *(Optional, direct access)* Create Cloudflare Tunnel `onprem`; set `CLOUDFLARE_TUNNEL_TOKEN`; `docker compose --profile tunnel up -d`; map `siem.` → `http://splunk:8000`, `siem-api.` → `https://splunk:8089` (noTLSVerify), `hec.` → `https://splunk:8088` (noTLSVerify). Protect `siem.` with Cloudflare Access. SQL Server is not published (raw TCP needs client-side `cloudflared`).
-- **Record:** host name, network, `BIND_ADDR`, Splunk version, license expiry, tunnel ID (if used).
+- [ ] **[manual]** Choose the x86_64 host: **this machine** (quick start; Docker Desktop with ~12 GB+ memory; only up while the machine is) or a **dedicated host/VM** on a private network with no inbound from the internet (~4 vCPU, 16 GB RAM, 100+ GB disk, Docker + Compose, SSH from this machine; e.g. a VM on Visual Studio subscription Azure credits with auto-shutdown, or a Hyper-V/physical box).
+- [ ] **[script]** Write `infra/compose/onprem/.env`: `BIND_ADDR` (`127.0.0.1` if the SUT gateway runs on the same host, otherwise the host's LAN IP); `MSSQL_SA_PASSWORD`, `SUT_READER_PASSWORD`, `SPLUNK_PASSWORD`, and `SPLUNK_HEC_TOKEN` (GUID) via `secret-env.mjs` into `Service & API`.
+- [ ] **[script]** `docker compose up -d` (remote host: copy the folder to `~/ve/onprem` first). `sqlserver-init` creates the `Operations` DB and the read-only `sut_reader` login; Splunk loads the `ve_indexes` app (`idp`, `app`, `network`, `cloudflare`, `onprem`, `sut_audit`).
+- [ ] **[script]** Smoke tests (through `docker compose exec` and `curl`, so no host tools needed): `sut_reader` reads `Operations` and **can't** create a table; Splunk REST on `:8089` answers; an event posted to HEC (`:8088`, index `onprem`) comes back from a search.
+- [ ] **[manual]** Request a Splunk Enterprise developer license with `splunk-admin@svc.<domain>` and save it to `~/.config/virtual-enterprise/splunk-dev.lic`. **[script]** Apply it (`splunk add licenses`, restart). Until then Splunk runs a 60-day trial and then drops to Free (no authentication). Set a renewal reminder.
+- [ ] *(Optional, direct access)* Create tunnel `onprem` (token into `infra/compose/onprem/.env`), `docker compose --profile tunnel up -d`, and map `siem.` → `http://splunk:8000`, `siem-api.` → `https://splunk:8089` (noTLSVerify), `hec.` → `https://splunk:8088` (noTLSVerify). Protect `siem.` with Cloudflare Access. SQL Server is not published (raw TCP needs client-side `cloudflared`).
+- **Record:** host and network, `BIND_ADDR`, SQL Server and Splunk versions, license expiry, tunnel ID (if used).
 
 ## Phase 6: Workforce Identity
 
