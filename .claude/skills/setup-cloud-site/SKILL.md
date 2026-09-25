@@ -55,7 +55,7 @@ If the file exists, change only what differs, and show the operator any change.
 2. `terraform -chdir=infra/oci plan -input=false -out=tfplan`. Summarize: compartment, budget and alert, VCN/subnet/security list, VM (A1 4 OCPU / 24 GB, Ubuntu 24.04), and no Autonomous DB (enabled in Phase 10). A plan with no changes means the site already matches.
 3. On an explicit yes: `terraform -chdir=infra/oci apply -input=false tfplan`.
    - **"Out of host capacity"** for A1 is common. If the region has more than one availability domain, set `availability_domain_index` to 1 or 2 and plan again. Otherwise retry later (capacity frees up during the day). PAYG accounts get capacity more readily.
-4. `terraform -chdir=infra/oci output` → record **OCI VMs** = `ve-cloud-1 (<public IP>)`.
+4. `terraform -chdir=infra/oci output` → record **OCI VMs** = `ve-cloud-1 (<public IP>)` and **Cloud VM address** = `ubuntu@<public IP>` (later scripts SSH to it).
 5. The state file contains resource IDs (and the Autonomous DB password once enabled). Remind the operator to keep a copy with the vault backups.
 
 Done when `plan` reports no changes.

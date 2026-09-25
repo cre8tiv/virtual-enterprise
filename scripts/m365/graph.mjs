@@ -75,7 +75,8 @@ export async function graphAll(path) {
 
 /**
  * Authenticate as ve-provisioning against the registry's tenant and return tenant facts.
- * @returns {Promise<{ tenant: string, clientId: string, displayName: string, verifiedDomains: {name: string, isDefault: boolean}[] }>}
+ * @returns {Promise<{ tenant: string, clientId: string, displayName: string, verifiedDomains: {name: string, isDefault: boolean}[], roles: string[] }>}
+ *   roles: the application permissions granted to the token (e.g. "User.ReadWrite.All")
  */
 export async function connect() {
   const tenant = getRegistryValue('M365 tenant ID');
@@ -100,5 +101,11 @@ export async function connect() {
   token = json.access_token;
 
   const [org] = (await graph('GET', '/organization?$select=displayName,verifiedDomains')).value;
-  return { tenant, clientId: clientId.trim(), displayName: org.displayName, verifiedDomains: org.verifiedDomains };
+  return {
+    tenant,
+    clientId: clientId.trim(),
+    displayName: org.displayName,
+    verifiedDomains: org.verifiedDomains,
+    roles: claims.roles || [],
+  };
 }

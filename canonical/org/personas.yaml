@@ -12,6 +12,13 @@
 # test_purpose:  why this persona exists, i.e. what it lets a test exercise
 #
 # Names are invented; each first+last combination was chosen to avoid well-known people.
+#
+# idp_subsets: IdPs that can't hold every persona. Okta's Integrator Free Plan allows 10 active users, so
+# Okta gets a cross-section: executives, sales incl. the mover, a SCIM negative case (marketing-ops is not in
+# app-sut), payroll access, the leaver, and IT/security. Entra and authentik hold all 25.
+
+idp_subsets:
+  okta: [ceo, cfo, vp-sales, ae-na, ae-apac, marketing-ops, payroll, support-t1, it-director, security-analyst]
 
 personas:
   # --- Executive -------------------------------------------------------------

@@ -47,13 +47,19 @@ export function asciiSlug(s) {
 
 /**
  * @param {string} domain the company domain, e.g. "example.com"
- * @returns {{ personas: Persona[], groups: any[], departments: any[], sites: any[] }}
+ * @returns {{ personas: Persona[], groups: any[], departments: any[], sites: any[], subsets: Record<string, string[]> }}
+ *   subsets: persona keys per IdP that holds only some personas (e.g. subsets.okta); absent = all personas
  */
 export function loadOrg(domain) {
   const { sites } = load('sites.yaml');
   const { departments } = load('departments.yaml');
   const { groups, defaults } = load('groups.yaml');
-  const { personas } = load('personas.yaml');
+  const { personas, idp_subsets: subsets = {} } = load('personas.yaml');
+  const keys = new Set(personas.map((p) => p.key));
+  for (const [idp, members] of Object.entries(subsets)) {
+    const unknown = members.filter((k) => !keys.has(k));
+    if (unknown.length) throw new Error(`idp_subsets.${idp}: unknown persona keys ${unknown.join(', ')}`);
+  }
 
   const siteByKey = new Map(sites.map((s) => [s.key, s]));
   const deptByKey = new Map(departments.map((d) => [d.key, d]));
@@ -96,5 +102,5 @@ export function loadOrg(domain) {
     };
   });
 
-  return { personas: resolved, groups: catalog, departments, sites };
+  return { personas: resolved, groups: catalog, departments, sites, subsets };
 }

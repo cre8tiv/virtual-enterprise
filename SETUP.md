@@ -159,7 +159,7 @@ Entra ID **cannot export existing passwords**, so pre-provisioned sample users (
    - generates a strong random password and stores it in the vault's `Personas` folder (resource name = UPN) **before** creating the user, so a crash never leaves an unknown password;
    - creates the user via Microsoft Graph (`forceChangePasswordNextSignIn = false`) with title, department, site, usage location, employee ID, and hire date;
    - adds group memberships and the manager. Licensing is group-based: the E5 license is assigned to `app-m365`, whose members are the 25 licensed personas. The rest of the employees stay unlicensed identities.
-3. **MFA:** new tenants enable security defaults, which force MFA registration. Either register a TOTP authenticator per persona and store the seed in the persona's vault entry (Passbolt supports TOTP; this enables unattended persona logins for tests), or use Conditional Access to exempt a test group (Entra P1, included in E5).
+3. **MFA:** new tenants enable security defaults, which force MFA registration on first interactive sign-in. Phase 6a replaces them with Conditional Access and registers each persona's vault TOTP seed as a hardware OATH token (see Phase 6).
 4. The script is idempotent: it plans from live state, fixes attribute drift, adds missing memberships (`--prune` also removes stale ones), and resets and re-vaults a password only with `--rotate <upn|all>`.
 
 ## Phase 5: Infrastructure
@@ -196,24 +196,39 @@ Stack: `infra/compose/onprem/` (SQL Server 2022 Developer, Splunk Enterprise, op
 
 ## Phase 6: Workforce Identity
 
-- [ ] **Decide the persona MFA policy first** (vaulted TOTP seeds vs. Conditional Access exemption; see Phase 4 "Users", step 3). Then finish the items deferred from Phase 4: read the `ops@<domain>` shared mailbox as a persona, add `ops@<domain>` as a Cloudflare Email Routing destination (click the verification email), repoint the catch-all and literal `svc.` rules at it, record **Email routing destination** = `ops@<domain>`, and tighten DMARC to `p=quarantine`.
+**MFA policy (decided):** MFA is enforced for every persona in every IdP. Each persona has one TOTP seed in the vault (`Personas` / `TOTP: <upn>`, base32, SHA1, 30 s, 6 digits), shared by Entra, authentik, and Okta and registered by script, so sign-ins are MFA-protected yet automatable (`node scripts/lib/totp.mjs code <upn>`). Do 6a first; it creates the seeds. 6b and 6c follow in either order.
 
-### authentik (primary IdP)
-- [ ] **[script]** Deploy authentik via Compose at `https://sso.<domain>`.
-- [ ] **[manual]** Complete initial admin setup; enable MFA for admins.
-- [ ] **[script]** Create groups mirroring departments.
-- [ ] **[script]** Configure outbound email (SMTP via M365 `ops@<domain>`).
+### 6a. Entra MFA (and Phase 4's deferred items)
 
-### Okta Developer org (secondary IdP)
-- [ ] **[manual]** Sign up for an Okta developer org with `okta-admin@svc.<domain>`.
-- [ ] **[manual]** Verify `<domain>` in Okta (DNS TXT via Cloudflare).
-- [ ] **[script]** Create groups mirroring departments.
+**Agent-assisted:** run the `/setup-entra-mfa` skill.
 
-### Entra ID (tertiary IdP, from Phase 4 tenant)
-- [ ] **[script]** Create groups mirroring departments.
-- [ ] Confirm the E5 license includes Entra ID P1/P2 (needed for SCIM to custom apps).
+- [ ] **[manual]** Add Graph application permissions to `ve-provisioning` and grant admin consent: `Policy.ReadWrite.AuthenticationMethod`, `UserAuthenticationMethod.ReadWrite.All`, `Policy.ReadWrite.ConditionalAccess`, `Policy.Read.All`, `Application.Read.All`.
+- [ ] **[manual]** Confirm the Global Administrator (break-glass) has its own MFA method; it's excluded from Conditional Access but Microsoft enforces MFA on admin portals.
+- [ ] **[script]** `node scripts/m365/mfa.mjs` (plan), then `--apply`: enable the Hardware OATH method; per persona, create the vault seed and a hardware OATH token (serial `VE-<employee ID>`) carrying it, assigned and activated (Graph beta, preview API); create `VE - Require MFA for all users` and `VE - Block legacy authentication` (Global Administrators excluded); turn off security defaults and enable the policies once every token is active. Method propagation can take up to an hour; re-run until no changes.
+- [ ] **[manual]** Verify: sign in at `https://myapps.microsoft.com` as `it-director` with password + code.
+- [ ] Deferred from Phase 4: as `it-director`, open the `ops@<domain>` shared mailbox; **[script]** add `ops@<domain>` as a Cloudflare Email Routing destination (**[manual]** click its verification email), repoint the catch-all and literal `svc.` rules at it, and record **Email routing destination** = `ops@<domain>`; tighten DMARC to `p=quarantine`.
 
-- **Record:** IdP URLs, org/tenant IDs.
+### 6b. authentik (primary IdP, cloud site)
+
+**Agent-assisted:** run the `/setup-authentik` skill.
+
+- [ ] **[script]** Secrets into `infra/compose/cloud/.env` via `secret-env.mjs` (`AUTHENTIK_SECRET_KEY`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_BOOTSTRAP_PASSWORD`, `AUTHENTIK_BOOTSTRAP_TOKEN`); `AUTHENTIK_BOOTSTRAP_EMAIL=sso-admin@svc.<domain>`.
+- [ ] **[script]** Copy the stack to `/opt/ve/cloud` on the VM and `docker compose up -d` (authentik 2025.10: server, worker, PostgreSQL; no Redis). Publish `sso.<domain>` → `http://authentik-server:9000` on tunnel `cloud`.
+- [ ] **[manual]** Sign in as `akadmin`, enroll its TOTP, copy its credentials to `Break-glass`.
+- [ ] **[script]** `node scripts/authentik/provision.mjs` (plan), then `--apply`: catalog groups, 25 personas with attributes and memberships, passwords (vault `authentik: <upn>`), TOTP devices from the seeds (via `ak shell` over SSH; authentik's API can't set a TOTP key).
+- [ ] **[manual]** Verify a persona sign-in at `https://sso.<domain>` with password + code.
+- Outbound email (recovery, notifications) waits on the SMTP relay decision (DESIGN.md §10).
+
+### 6c. Okta (secondary IdP)
+
+**Agent-assisted:** run the `/setup-okta` skill.
+
+- [ ] **[manual]** Sign up for the Okta Integrator Free Plan with `okta-admin@svc.<domain>` (business email; **10 active users** max). Store admin credentials in `Break-glass`.
+- [ ] **[manual]** Create API token `ve-provisioning` into Passbolt `Service & API` / `Okta API token`; add the **Custom OTP** authenticator (SHA1, 6 digits, 30 s) and record its factor profile ID; require Password + Another factor in the authentication policies.
+- [ ] **[script]** `node scripts/okta/provision.mjs` (plan), then `--apply`: catalog groups, the 10-persona subset (`idp_subsets.okta` in `personas.yaml`), passwords (vault `okta: <upn>`), Custom OTP enrolled with each persona's seed.
+- [ ] **[manual]** Verify a persona sign-in with password + code.
+
+- **Record:** Entra MFA state, authentik URL and version, Okta org URL, Okta custom OTP factor profile.
 
 ## Phase 7: HR (Odoo Community + Payroll DB)
 
@@ -327,6 +342,7 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Persona roster version | | |
 | OCI tenancy / region | | |
 | OCI VMs | | Idle reclamation |
+| Cloud VM address | | |
 | Autonomous DB | | |
 | Cloudflare Tunnel IDs (cloud / onprem) | | |
 | On-prem host / network | | |
@@ -335,8 +351,11 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Splunk version | | Dev license |
 | Splunk URL (if tunneled) | `https://siem.<domain>` | |
 | SUT gateway host | | |
+| Entra MFA | | |
 | authentik URL | `https://sso.<domain>` | |
-| Okta org URL | | |
+| authentik version | | |
+| Okta org URL | | API token expires after 30 days unused |
+| Okta custom OTP factor profile | | |
 | Odoo URL | `https://hr.<domain>` | |
 | Salesforce org | | |
 | HubSpot account | | |
