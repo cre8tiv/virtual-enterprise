@@ -26,7 +26,7 @@ Done when you have the result table and exit code. Exit 0 → go to step 3.
 1. Show the operator the MISSING / OUTDATED / NOT RUNNING rows and what `--install` will do on their platform (winget or Chocolatey on Windows, Homebrew on macOS, apt/dnf or direct download on Linux; installs may prompt for admin/sudo).
 2. On an explicit yes, re-run with `-Install` (Windows) or `--install` (macOS/Linux). On no, stop and list the missing tools as open items.
 3. Relay every `Note:` line. These are steps the script can't do (Homebrew bootstrap, Docker Engine or Node.js on Linux, starting Docker Desktop, PATH changes). Wait for the operator to confirm each one is done.
-4. Re-run the check script in a **new shell** so PATH changes apply.
+4. Re-run the check script in a **new shell** so PATH changes apply. The agent's own shell keeps its old PATH, so a tool installed by winget (`terraform`, `passbolt`) still shows MISSING there. On Windows refresh it in the same command: `$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')`. Later phases run `passbolt` and `node` scripts from the PowerShell tool for the same reason (Git Bash launched earlier doesn't see winget's PATH).
 
 Done when the check script exits 0, or the operator chooses to stop (record what remains).
 

@@ -40,6 +40,8 @@ function generatePassword(length = 32) {
   return randomBytes(length).toString('base64url').slice(0, length);
 }
 
+const PLAIN_COMMANDS = new Set(['share', 'update']);
+
 /**
  * Run go-passbolt-cli with the project config and the automation passphrase.
  * @param {string[]} args
@@ -49,11 +51,11 @@ function passbolt(args) {
   const passphrase = readPassphrase();
   const out = execFileSync(
     'passbolt',
-    // `share` has no --json flag and prints plain text.
-    [...args, '--config', CONFIG, '--userPassword', passphrase, '--mfaMode', 'none', ...(args[0] === 'share' ? [] : ['--json'])],
+    // `share` and `update` have no --json flag and print plain text.
+    [...args, '--config', CONFIG, '--userPassword', passphrase, '--mfaMode', 'none', ...(PLAIN_COMMANDS.has(args[0]) ? [] : ['--json'])],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  return args[0] !== 'share' && out.trim() ? JSON.parse(out) : null;
+  return !PLAIN_COMMANDS.has(args[0]) && out.trim() ? JSON.parse(out) : null;
 }
 
 /**
@@ -105,6 +107,23 @@ function isOwner(folderId, uid) {
   return permissions.some(
     (p) => (p.aro_foreign_key ?? p.AroForeignKey) === uid && Number(p.type ?? p.Type) === 15,
   );
+}
+
+/**
+ * A resource created through the CLI is owned only by its creator, even inside a shared folder.
+ * Share it with every user who owns the folder, so the operator sees it in the UI.
+ * @param {string} folderId @param {string} resourceId
+ */
+function shareWithFolderOwners(folderId, resourceId) {
+  const owners = (passbolt(['get', 'folder', 'permission', '--id', folderId]) || [])
+    .filter((p) => (p.aro ?? p.Aro) === 'User' && Number(p.type ?? p.Type) === 15)
+    .map((p) => p.aro_foreign_key ?? p.AroForeignKey);
+  const has = new Set(
+    (passbolt(['get', 'resource', 'permission', '--id', resourceId]) || []).map((p) => p.aro_foreign_key ?? p.AroForeignKey),
+  );
+  for (const uid of owners) {
+    if (!has.has(uid)) passbolt(['share', 'resource', '--id', resourceId, '--type', '15', '--user', uid]);
+  }
 }
 
 /** @param {string[]} argv @returns {{positional: string[], flags: Record<string, string | true>}} */
@@ -175,6 +194,7 @@ try {
             ? generatePassword(Number(flags.generate) || 32)
             : undefined;
       if (existing && !flags.rotate) {
+        shareWithFolderOwners(folderId, existing.id);
         console.log(existing.id);
         break;
       }
@@ -185,9 +205,11 @@ try {
       if (password !== undefined) fields.push('--password', password);
       if (existing) {
         passbolt(['update', 'resource', '--id', existing.id, ...fields]);
+        shareWithFolderOwners(folderId, existing.id);
         console.log(existing.id);
       } else {
         const created = passbolt(['create', 'resource', '--name', name, '--folderParentID', folderId, ...fields]);
+        shareWithFolderOwners(folderId, created.id);
         console.log(created.id);
       }
       break;

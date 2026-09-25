@@ -1,6 +1,6 @@
 ---
 name: setup-m365
-description: Run SETUP.md Phase 4 for the virtual enterprise. Stands up or adopts the M365 E5 developer sandbox (removing instant-sandbox sample users), adds the company domain (verification, mail DNS, DKIM), provisions the org model's groups and 25 persona users with group-based licensing, creates the ops@ shared mailbox, and moves email routing and DMARC to their final state. Use when starting Phase 4, resuming it, or re-syncing personas after canonical/org changes.
+description: Run SETUP.md Phase 4 for the virtual enterprise. Stands up or adopts the M365 E5 developer sandbox (removing instant-sandbox sample users), adds the company domain (verification, mail DNS, DKIM), provisions the org model's groups and 25 persona users with group-based licensing, and creates the ops@ shared mailbox. The final email routing switch and DMARC tightening wait for Phase 6. Use when starting Phase 4, resuming it, or re-syncing personas after canonical/org changes.
 disable-model-invocation: true
 ---
 
@@ -19,7 +19,18 @@ Helpers:
 - `node scripts/lib/registry.mjs get|set "<Key>" ["<Value>"]`: read/write `local/registry.md`
 - `node scripts/m365/domain.mjs status|add|verify|default`: domain in the tenant; `status` prints the DNS records M365 needs as JSON
 - `node scripts/m365/cleanup.mjs [--apply] [--keep <upn>]... [--no-purge]`: removes users and groups the org model doesn't manage (e.g. instant-sandbox samples); prints a plan unless `--apply`
-- `node scripts/m365/provision.mjs [--apply] [--prune] [--rotate <upn|all>]`: groups, personas, memberships, managers, licensing; prints a plan unless `--apply`
+- `node scripts/m365/provision.mjs [--apply] [--prune] [--rotate <upn|all>]`: groups, personas, memberships, managers, licensing; prints a plan unless `--apply`. `--rotate` first checks that the app holds a role that can reset passwords and stops before changing anything if not.
+
+Admin portals (give the operator the direct link for each manual step):
+
+| Task | Portal |
+|---|---|
+| App registration, API permissions, directory roles, tenant ID, security defaults | Entra admin center: https://entra.microsoft.com/ |
+| DKIM signing | Microsoft Defender: https://security.microsoft.com/ (Email & collaboration → Policies & rules → Threat policies → Email authentication settings → DKIM) |
+| Users, licenses, shared mailboxes | Microsoft 365 admin center: https://admin.cloud.microsoft/ |
+| Message trace, mail flow, mailbox settings | Exchange admin center: https://admin.cloud.microsoft/exchange |
+
+Windows note: run the `node scripts/...` commands from the PowerShell tool after refreshing PATH (`$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')`). The vault adapter needs `passbolt` on PATH, and a shell started before the prerequisites were installed doesn't have it. A `provision.mjs` run takes 30–60 seconds; give it a long timeout.
 
 ## Steps
 
@@ -54,12 +65,13 @@ Done when all four values are in the registry.
 
 Skip if `node scripts/m365/domain.mjs status` already succeeds.
 
-Guide the operator through the Entra admin center, signed in as the sandbox admin:
+Guide the operator through the Entra admin center (https://entra.microsoft.com/), signed in as the sandbox admin:
 
 1. App registrations → New registration: name `ve-provisioning`, single tenant, no redirect URI.
 2. API permissions → Add → Microsoft Graph → **Application permissions**: `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`, `Domain.ReadWrite.All`, `Organization.Read.All` → **Grant admin consent**.
 3. Certificates & secrets → New client secret (maximum lifetime) → copy the **Value**.
-4. In Passbolt, folder `Service & API`, create resource **`Entra app: ve-provisioning`**: username = Application (client) ID, password = secret value, description = secret expiry date.
+4. In Passbolt, folder `Service & API`, create resource **`Entra app: ve-provisioning`**: username = Application (client) ID, password = secret value, description = secret expiry date. Create it **inside** the `Service & API` folder (open the folder, then add), so the automation user inherits access; the scripts read it as that user.
+5. Roles & admins → **User Administrator** (open the built-in role by name, not "New custom role") → Assignments → Add assignments → search `ve-provisioning` → scope **Directory**. Without this role Graph returns 403 on `--rotate` (password reset). If `Password Administrator` fails with "role not found", User Administrator works.
 
 Then run `node scripts/m365/domain.mjs status`. It fails with a clear message if the token is for another tenant. Record the secret expiry as the Renewal of a **ve-provisioning secret** row.
 
@@ -67,25 +79,25 @@ Done when `status` prints JSON.
 
 ### 4. Domain verification
 
-1. `status` → if `added` is false, run `add`, then `status` again.
-2. If not verified: create the returned TXT record in Cloudflare (zone `<domain>`, skip if an identical record exists). Wait until it resolves: `node -e "require('dns').promises.resolveTxt('<domain>').then(r=>console.log(r.flat().join('\n')))"`. Then run `verify`, retrying for a few minutes if needed.
-3. `default` to make `<domain>` the tenant default.
+1. `status` → if `added` is false, run `add`, then `status` again (`add` waits for Graph to catch up; `status` can still lag a few seconds).
+2. If not verified: create the returned TXT record (`MS=ms...`, at the apex) in Cloudflare (zone `<domain>`, skip if an identical record exists). The MX record in the same list is optional for verification; skip it. Wait until the TXT resolves. DNS checks: Node's `dns.promises.resolve*` can fail with `ECONNREFUSED` in some environments while `dns.lookup` works, so on Windows prefer `Resolve-DnsName <name> -Type TXT -Server 1.1.1.1` (macOS/Linux: `dig +short TXT <name> @1.1.1.1`). Then run `verify`, retrying for a few minutes if needed.
+3. `default` to make `<domain>` the tenant default. `status` may keep showing `default: false` for a few seconds; re-read it.
 
 Done when `status` shows `verified: true, default: true`.
 
 ### 5. Mail and service DNS records
 
 1. If the registry's **Email Routing apex** is `enabled`, disable Email Routing for the apex only (keep `svc.<domain>`) so the root MX isn't locked, then set the row to `disabled`.
-2. `status` now returns the service records. For each record (Email first, then Teams/Skype and Intune for a complete setup), create it in Cloudflare if missing: **DNS only (not proxied)**, TTL as given, SRV fields as given. If a different record already holds the same name and type (for example another root MX or SPF), show both to the operator and replace it only on their yes.
-3. Confirm the root MX resolves to Exchange Online: `node -e "require('dns').promises.resolveMx('<domain>').then(console.log)"`.
+2. `status` now returns the service records. Create these in Cloudflare if missing, **DNS only (not proxied)**, TTL as given: the Email records (root MX, SPF TXT, `autodiscover` CNAME), the Teams/Skype records (`sip` and `lyncdiscover` CNAMEs, the two SRVs; SRV names are `_sip._tls.<domain>` and `_sipfederationtls._tcp.<domain>`, with priority, weight, port and target as given), and the Intune CNAMEs (`enterpriseregistration`, `enterpriseenrollment`). Skip `msoid` (legacy) and the `SharepointDefaultDomain` record, which is a CNAME at the apex and can't coexist with the apex MX/TXT. If a different record already holds the same name and type, show both to the operator and replace it only on their yes. Cloudflare Email Routing leaves an apex SPF (`include:_spf.mx.cloudflare.net`) behind when it is enabled on the zone; expect to replace it with the M365 SPF (`v=spf1 include:spf.protection.outlook.com -all`). The `svc.<domain>` SPF stays as it is.
+3. Confirm the root MX resolves to Exchange Online (`Resolve-DnsName <domain> -Type MX -Server 1.1.1.1`, or `dig`). Resolvers can serve the old SPF for a few minutes after the change; check the Cloudflare record itself.
 
 Done when every Email record exists in Cloudflare and the MX resolves.
 
 ### 6. DKIM
 
-1. The operator opens the Microsoft Defender portal → Email & collaboration → Policies & rules → Threat policies → Email authentication settings → DKIM → `<domain>`, and reads you the two CNAME records it shows (host `selector1._domainkey` / `selector2._domainkey` and their targets; these aren't secret).
-2. Create both CNAMEs in Cloudflare, DNS only, if missing. Wait until both resolve (`dns.promises.resolveCname`).
-3. The operator enables "Sign messages for this domain with DKIM signatures".
+1. The operator opens the Microsoft Defender portal (https://security.microsoft.com/) → Email & collaboration → Policies & rules → Threat policies → Email authentication settings → DKIM → `<domain>`, and reads you the two CNAME records (host `selector1._domainkey` / `selector2._domainkey` and their targets; these aren't secret). Clicking the enable toggle before the records exist produces a "Client Error … CNAME record does not exist" dialog that lists both records with their exact hosts and targets, so a screenshot of that dialog is enough. The targets look like `selector1-<domain-with-dashes>._domainkey.<tenant>.a-v1.dkim.mail.microsoft`.
+2. Create both CNAMEs in Cloudflare, DNS only, if missing. Don't rely on resolving the target from your side: Microsoft provisions the target names only after the enable attempt, so a resolver may return NXDOMAIN for a while even though the Cloudflare records are correct.
+3. The operator waits 5–10 minutes, then enables "Sign messages for this domain with DKIM signatures", retrying if the portal still says the CNAME is missing (sync can take up to a few hours).
 
 Done when the operator confirms DKIM shows **Enabled**.
 
@@ -102,26 +114,29 @@ Done when the plan prints `Nothing to clean up` (apart from the Exchange-only gr
 ### 8. Provision the org model
 
 1. Run `node scripts/m365/provision.mjs` (plan). Show a summary: groups, users, memberships, and managers to create, plus license warnings.
-2. **Licenses:** if the plan warns that non-persona users (typically the sandbox admin) hold E5 licenses and there aren't enough free for 25 personas, ask the operator to remove the license from those accounts in the M365 admin center. The admin role doesn't need a license. **Exception:** if the admin's mailbox is the **M365 developer program account** (step 2), removing its license loses renewal warnings; keep it licensed and accept 24 licensed personas, or change the program's contact email first.
+2. **Licenses:** if the plan warns that non-persona users (typically the sandbox admin) hold E5 licenses and there aren't enough free for 25 personas, ask the operator to remove the license from those accounts in the M365 admin center (https://admin.cloud.microsoft/ → Users → Active users → the user → Licenses and apps → uncheck → Save changes). The admin role doesn't need a license. Graph shows the change after a minute or two; re-run the plan until the consumed count drops (the portal can look done while the license is still assigned). **Exception:** if the admin's mailbox is the **M365 developer program account** (step 2), removing its license loses renewal warnings; keep it licensed and accept 24 licensed personas, or change the program's contact email first.
 3. On an explicit yes, run with `--apply`. Persona passwords are generated and stored in the vault's `Personas` folder before each user is created.
-4. Re-run the plan until it prints `No changes`. Group-based licensing can take several minutes; a later plan shows the consumed count reaching the persona total.
+4. Re-run the plan until it prints `No changes`. Group-based licensing can take several minutes; a later plan shows the consumed count reaching the persona total. Sandboxes may auto-assign a direct license to new users, and `assign ... to app-m365` can stay in the plan because the group's `assignedLicenses` stays empty. That single leftover line is acceptable when the consumed count equals the persona total.
+5. Confirm the persona items are visible to the operator in the Passbolt `Personas` folder (the vault's default metadata type must be legacy cleartext, see `/setup-vault`). If a persona item isn't shared with the admin, `vault.mjs upsert "Personas" <upn>` re-shares it.
 
-Done when the plan shows no changes and every licensed persona holds a license.
+Done when the plan shows no changes (apart from that group-license line) and every persona holds a license.
 
 ### 9. Shared mailbox `ops@<domain>` (operator)
 
-1. M365 admin center → Teams & groups → Shared mailboxes → Add: display name `Operations`, email `ops@<domain>`. Add members with full access: the `it-director` and `sysadmin` personas.
-2. **Mail flow test:** the operator sends an email from an external mailbox to `ops+phase4@<domain>`, signs in to Outlook on the web as the `it-director` persona (credentials from the vault's `Personas` folder; skip the MFA registration prompt for now), opens the shared mailbox, and confirms it arrived. This proves root-domain delivery and plus-addressing.
+1. M365 admin center (https://admin.cloud.microsoft/) → Teams & groups → Shared mailboxes → Add: display name `Operations`, email `ops@<domain>`. Add members with full access: the `it-director` and `sysadmin` personas.
+2. **Mail flow test:** the operator sends an email from an external mailbox to `ops+phase4@<domain>` (a second test from another provider helps, since Yahoo and others may delay mail to new domains). Prove delivery with a message trace, not a persona sign-in: Exchange admin center (https://admin.cloud.microsoft/exchange) → Mail flow → Message trace, recipient `ops@<domain>` (the trace records the resolved address, so searching for the `+` alias finds nothing), a date range that includes today in UTC, delivery status **Delivered**. New tenants can take a few hours to show messages. Persona sign-in runs into the forced MFA registration, so don't require it here.
 
-Done when the operator confirms the test email arrived.
+Done when the message trace shows the test email as delivered.
 
-### 10. Final email routing and DMARC
+### 10. Final email routing and DMARC (deferred to Phase 6)
 
-1. In Cloudflare, add `ops@<domain>` as a destination address. The verification email lands in the shared mailbox, and the operator clicks it.
+Skip this step in Phase 4. Making `ops@<domain>` a Cloudflare destination needs someone to read its verification email in the shared mailbox, which needs a persona sign-in and therefore the persona MFA decision (Phase 6). Leave routing pointed at the operator mailbox and DMARC at `p=none`, and record both as deferred. Phase 6 does:
+
+1. Add `ops@<domain>` as a destination address in Cloudflare; the operator clicks the verification email.
 2. Point the catch-all and every literal `svc.<domain>` rule at `ops@<domain>` (leave rules already pointing there alone). Record **Email routing destination** = `ops@<domain>`.
-3. With DKIM enabled and the step 9 test passed, ask whether to tighten DMARC. On yes, update `_dmarc.<domain>` to `p=quarantine` (keep the `rua`).
+3. With DKIM enabled and the mail test passed, ask whether to tighten DMARC. On yes, update `_dmarc.<domain>` to `p=quarantine` (keep the `rua`).
 
-Done when routing forwards to `ops@<domain>` and DMARC matches the operator's choice.
+Done when the deferral is recorded in the registry (**Email routing destination** keeps the operator mailbox).
 
 ### 11. Record and report
 
@@ -130,5 +145,6 @@ Done when routing forwards to `ops@<domain>` and DMARC matches the operator's ch
 3. Name what's deferred, with the reason:
    - **Passbolt SMTP:** all 25 licenses belong to personas, so there's no mailbox for SMTP AUTH, and basic SMTP AUTH is being retired. Waits on the relay decision (DESIGN.md §10).
    - **Persona MFA policy:** security defaults still prompt each persona to register MFA on interactive sign-in. Decided in Phase 6 (TOTP seeds in the vault vs. Conditional Access).
+   - **`ops@` routing switch and DMARC tightening:** need a persona sign-in to read the destination verification email. Done at the start of Phase 6, after the MFA decision.
 
 Next step: **Phase 5: Infrastructure**.

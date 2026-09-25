@@ -23,7 +23,8 @@ import { loadOrg } from '../lib/org.mjs';
 import { GRAPH, connect, graph, graphAll, odata, vault } from './graph.mjs';
 
 const LICENSE_GROUP = 'app-m365';
-const E5_SKU = 'DEVELOPERPACK_E5';
+// The Developer Program sells the E5 pack under either part number depending on when the sandbox was created.
+const E5_SKUS = ['DEVELOPERPACK_E5', 'DEVELOPERPACK_V2_E5'];
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);
@@ -51,7 +52,22 @@ if (flag('desired')) {
 }
 
 const company = getRegistryValue('Company name') || '';
-const { tenant, displayName, verifiedDomains } = await connect();
+const { tenant, clientId, displayName, verifiedDomains } = await connect();
+
+// Password resets need a directory role for the app (application permissions alone give 403). Check before any
+// change, because a rotation writes the new password to the vault first and would leave it out of sync with Entra.
+if (ROTATE && APPLY) {
+  const roles = (await graphAll(
+    `/servicePrincipals(appId='${clientId}')/transitiveMemberOf/microsoft.graph.directoryRole?$select=displayName`,
+  )).map((r) => r.displayName);
+  const canReset = ['User Administrator', 'Password Administrator', 'Helpdesk Administrator', 'Global Administrator'];
+  if (!roles.some((r) => canReset.includes(r))) {
+    throw new Error(
+      've-provisioning has no directory role that can reset passwords. In the Entra admin center, assign it ' +
+      'User Administrator (Roles & admins, scope Directory), then re-run. Nothing was changed.',
+    );
+  }
+}
 
 // Tenant guard: the company domain must be verified in this tenant (scripts/m365/domain.mjs).
 if (!verifiedDomains.some((d) => d.name.toLowerCase() === domain.toLowerCase())) {
@@ -192,12 +208,12 @@ for (const p of org.personas) {
 
 // 5. Group-based licensing
 const skus = (await graph('GET', '/subscribedSkus')).value;
-const e5 = skus.find((s) => s.skuPartNumber === E5_SKU);
+const e5 = skus.find((s) => E5_SKUS.includes(s.skuPartNumber));
 if (!e5) {
-  console.log(`  ! No ${E5_SKU} subscription found (available: ${skus.map((s) => s.skuPartNumber).join(', ') || 'none'})`);
+  console.log(`  ! No ${E5_SKUS.join(' or ')} subscription found (available: ${skus.map((s) => s.skuPartNumber).join(', ') || 'none'})`);
 } else {
   const licensedPersonas = org.personas.filter((p) => p.licensed).length;
-  console.log(`  License ${E5_SKU}: ${e5.consumedUnits}/${e5.prepaidUnits.enabled} consumed; ${licensedPersonas} personas need one`);
+  console.log(`  License ${e5.skuPartNumber}:${e5.consumedUnits}/${e5.prepaidUnits.enabled} consumed; ${licensedPersonas} personas need one`);
   const directLicensed = (await graphAll(`/users?$filter=assignedLicenses/any(x:x/skuId eq ${e5.skuId})&$count=true&$select=id,userPrincipalName`))
     .filter((u) => !personaIds().has(u.id));
   if (directLicensed.length && e5.prepaidUnits.enabled - directLicensed.length < licensedPersonas) {
@@ -207,7 +223,7 @@ if (!e5) {
   const gid = groupIds.get(LICENSE_GROUP);
   const assigned = gid ? (await graph('GET', `/groups/${gid}?$select=assignedLicenses`)).assignedLicenses : [];
   if (!assigned.some((l) => l.skuId === e5.skuId)) {
-    await step(`assign ${E5_SKU} to ${LICENSE_GROUP}`, () =>
+    await step(`assign ${e5.skuPartNumber} to ${LICENSE_GROUP}`, () =>
       graph('POST', `/groups/${groupIds.get(LICENSE_GROUP)}/assignLicense`,
         { addLicenses: [{ skuId: e5.skuId, disabledPlans: [] }], removeLicenses: [] }, { retry404: true }));
   }

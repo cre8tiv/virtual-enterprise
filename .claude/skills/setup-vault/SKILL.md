@@ -66,9 +66,12 @@ Done when the grep check succeeds.
 
 1. `compose up -d` (a no-op when already running; on an older stack it adds Traefik and stops publishing Passbolt directly), then wait until `compose ps` shows all services running and `db` healthy. A "port is already allocated" / "address already in use" error means step 2's probe missed a conflict: return to step 2 with the next loopback address.
 2. Certificate: `node -e "require('https').get('https://vault.<domain>/healthcheck/status.json',r=>console.log(r.statusCode,r.socket.getPeerCertificate().issuer.O)).on('error',e=>console.log(e.code))"`. Node validates against public CAs, so a `200` with issuer `Let's Encrypt` means the certificate is trusted. Issuance can take a minute or two; on errors, read `compose logs traefik` (usual causes: token permissions, wrong zone, rate limits; while testing, set `ACME_CA_SERVER` to the staging URL in `.env.example`).
-3. Healthcheck: `compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt healthcheck' www-data`
+3. Healthcheck: wait until the first-start migrations finish (the `metadata_keys` table exists; a "Table ... doesn't exist" error in the first minute is that), then run it with the server key fingerprint in the environment, because `compose exec` doesn't inherit it and the GPG and metadata checks fail without it:
+   `fp=$(curl -s https://vault.<domain>/auth/verify.json | grep -o '"fingerprint":"[0-9A-F]*"' | cut -d'"' -f4)`
+   `compose exec -T -e PASSBOLT_GPG_SERVER_KEY_FINGERPRINT=$fp passbolt su -w PASSBOLT_GPG_SERVER_KEY_FINGERPRINT -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt healthcheck' www-data`
+   In Git Bash on Windows prefix the command with `MSYS_NO_PATHCONV=1`, or `/bin/bash` gets rewritten into a Git path.
 
-Done when the certificate check prints `200 Let's Encrypt` and the healthcheck shows no errors other than email/SMTP not configured.
+Done when the certificate check prints `200 Let's Encrypt` and the healthcheck shows no errors other than email/SMTP not configured and "not configured to force SSL" (Traefik terminates TLS).
 
 ### 6. Admin user
 
@@ -95,14 +98,18 @@ Same branching with `automation@svc.<domain>`, role `user` (`-f Automation -l Se
 The operator, in a **separate browser profile** so the admin session stays untouched:
 
 1. Opens the registration URL, installs the extension, and sets a passphrase generated in their password manager.
-2. Exports the private key (extension → Manage account → Keys inspector → download private key) to `~/.config/virtual-enterprise/automation.asc`.
+2. Exports the private key to `~/.config/virtual-enterprise/automation.asc`: in the Passbolt web app, avatar → Profile → Keys → **Download private key**. The recovery kit downloaded during setup is the same private key and can be renamed instead. Check that the file is the automation user's, not the admin's, before it goes into the identity (the two look the same).
 3. Writes the passphrase to `~/.config/virtual-enterprise/automation.passphrase` (restrict permissions to their user) and keeps a copy in their password manager.
 
 These two files together are the automation identity. It never gets access to `Break-glass`, which limits the impact of files on disk.
 
+Signing in from a browser or profile that didn't do the registration shows "Check your mailbox" and waits for an emailed link, but SMTP doesn't exist until Phase 4. Issue a recovery link instead (for the admin or the automation user): `compose exec passbolt su -s /bin/bash -c '/usr/share/php/passbolt/bin/cake passbolt recover_user -u <email>' www-data`. The operator opens it, imports the private key (`automation.asc` for the automation user), and enters the passphrase.
+
 Done when the users query shows `active = 1` and `test -f` succeeds for both files.
 
-### 8. CLI and adapter
+### 8. Metadata type, CLI and adapter
+
+0. **Metadata type (operator, admin UI):** Administration → Organisation Settings → Encrypted Metadata: turn on **Enable legacy cleartext metadata** and select **Legacy cleartext metadata** as the default type; leave encrypted metadata enabled; save. `go-passbolt-cli` can't trust the server-issued metadata key (go-passbolt-cli #79), so v5 items created by the automation user can't be shared with the admin and never appear in the admin's vault. Do this before any item is created. To check: `passbolt create resource ... --debug` logs `DefaultResourceType:v4`. If v5 items already exist, delete and recreate them (persona passwords through `provision.mjs --rotate all`), and confirm with the operator first.
 
 1. `passbolt configure --config ~/.config/virtual-enterprise/passbolt.toml --serverAddress https://vault.<domain> --userPrivateKeyFile ~/.config/virtual-enterprise/automation.asc` (safe to re-run; the passphrase is not stored in the config). The certificate is trusted, so TLS verification stays on; if an earlier config contains `tlsSkipVerify = true`, re-running configure without the flag should reset it. Confirm the file no longer has it.
 2. `node scripts/vault/vault.mjs whoami`

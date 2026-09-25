@@ -34,10 +34,11 @@ function normalize(r) {
     case 'CName':
       return { ...base, type: 'CNAME', value: r.canonicalName };
     case 'Srv':
+      // Graph sometimes already includes "_service._proto" in the label; don't prefix it twice.
       return {
         ...base,
         type: 'SRV',
-        name: `${r.service}.${r.protocol}.${fqdn(r.label)}`,
+        name: fqdn(r.label).startsWith(`${r.service}.`) ? fqdn(r.label) : `${r.service}.${r.protocol}.${fqdn(r.label)}`,
         value: r.nameTarget,
         priority: r.priority,
         weight: r.weight,
@@ -77,6 +78,8 @@ switch (command) {
   }
   case 'add':
     if (!d) d = await graph('POST', '/domains', { id: domain });
+    // Graph is eventually consistent: `status` can report "not added" for a few seconds after the POST.
+    for (let i = 0; i < 10 && !(await getDomain()); i++) await new Promise((r) => setTimeout(r, 2000));
     console.log(`added ${domain}`);
     break;
   case 'verify':

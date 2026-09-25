@@ -10,7 +10,7 @@ Walks the operator through [SETUP.md](../../../SETUP.md) Phase 3 using the `clou
 
 **Idempotent by design:** read Cloudflare state before every change (routing settings, destination addresses, rules, DNS records) and change only what differs. The operator clicks the verification link and sends the test email; everything else goes through the API.
 
-**Scope guard:** Email Routing is enabled **only on `svc.<domain>`**. The root domain's MX belongs to Microsoft 365 from Phase 4, so leave apex routing off. If Cloudflare insists on enabling the apex first, allow it, record it as **Email Routing apex** = `enabled (disable in Phase 4)` in the registry, and continue.
+**Scope guard:** Email Routing is enabled **only on `svc.<domain>`**. The root domain's MX belongs to Microsoft 365 from Phase 4, so leave apex routing off. If Cloudflare insists on enabling the apex first, allow it, record it as **Email Routing apex** = `enabled (disable in Phase 4)` in the registry (if Cloudflare adds no apex MX records, the flag alone doesn't block M365's MX, so Phase 4 may leave it), and continue.
 
 ## Steps
 
@@ -33,7 +33,9 @@ Done when the DNS status for `svc.<domain>` shows the required MX and SPF record
 1. If the operator mailbox isn't a destination address in the account, create it. Cloudflare emails a verification link.
 2. Ask the operator to click the link, then re-read the address.
 
-Done when the destination is `verified`. Rules forward only to verified destinations.
+Cloudflare marks an address `verified` immediately when it matches the Cloudflare account's own email, so no link may arrive. Read the returned status before asking the operator to click anything. Rules forward only to verified destinations.
+
+Done when the destination is `verified`.
 
 ### 4. Forwarding
 
@@ -44,11 +46,11 @@ Done when the destination is `verified`. Rules forward only to verified destinat
 
 If `_dmarc.<domain>` has no TXT record, create:
 `v=DMARC1; p=none; rua=mailto:dmarc@svc.<domain>`
-If one exists with different content, show it to the operator and change it only on their yes. Phase 4 tightens `p` once M365 signs mail.
+If one exists with different content, show it to the operator and change it only on their yes. Phase 6 tightens `p` once M365 signs mail and the persona MFA policy is decided.
 
 ### 6. Prove delivery
 
-1. Generate a unique address: `phase3-test-<8 random chars>@svc.<domain>` (`node scripts/vault/vault.mjs generate 8` works offline).
+1. Generate a unique address: `phase3-test-<8 random chars>@svc.<domain>` (`node -e "console.log(require('crypto').randomBytes(4).toString('hex'))"` gives 8 lowercase hex characters; the vault password generator can emit `-` and capitals, which make an awkward address).
 2. Ask the operator to send an email to it from any mailbox other than the destination (Gmail, for example, may hide mail sent to itself), and to report whether it arrived.
 3. Branch:
    - **Arrived** → the catch-all covers the subdomain. Record **Email Routing mode** = `catch-all`.
@@ -64,4 +66,4 @@ For each `<system>-admin@svc.<domain>` the runbook will use (`m365-admin`, `oci-
 
 ### 8. Record and report
 
-Update `local/registry.md`: **Email routing destination** (operator mailbox), **Email Routing mode**, and **Email Routing apex** if it was enabled. Summarize the state and name what remains for Phase 4 (switching the destination to `ops@<domain>`, tightening DMARC). Next step: **Phase 4: Microsoft 365 E5 Developer Sandbox**.
+Update `local/registry.md`: **Email routing destination** (operator mailbox), **Email Routing mode**, and **Email Routing apex** if it was enabled. Summarize the state and name what remains for Phase 6 (switching the destination to `ops@<domain>`, tightening DMARC; both need a persona sign-in to read the destination's verification email). Next step: **Phase 4: Microsoft 365 E5 Developer Sandbox**.
