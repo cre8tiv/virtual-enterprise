@@ -74,6 +74,27 @@ export function secondsLeft(nowMs = Date.now()) {
   return STEP_SECONDS - (Math.floor(nowMs / 1000) % STEP_SECONDS);
 }
 
+/**
+ * Current time from the HTTP Date header of a Cloudflare endpoint, so a drifting local clock can't produce codes
+ * the IdPs reject (authentik tolerates about one 30-second step). Falls back to the local clock.
+ * @returns {Promise<{ nowMs: number, skewSeconds: number | null }>} skewSeconds = local minus true time, null if unknown
+ */
+export async function trueTime() {
+  if (process.env.VE_TOTP_LOCAL_CLOCK) return { nowMs: Date.now(), skewSeconds: null };
+  try {
+    const sent = Date.now();
+    const res = await fetch('https://1.1.1.1/cdn-cgi/trace', { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+    const header = res.headers.get('date');
+    if (!header) throw new Error('no Date header');
+    // The Date header has 1-second resolution: add half a second and half the round trip.
+    const received = Date.now();
+    const nowMs = Date.parse(header) + 500 + (received - sent) / 2;
+    return { nowMs, skewSeconds: Math.round((received - nowMs) / 1000) };
+  } catch {
+    return { nowMs: Date.now(), skewSeconds: null };
+  }
+}
+
 /** @param {string} upn @returns {string} vault resource name of the persona's seed */
 export const seedResource = (upn) => `TOTP: ${upn}`;
 
@@ -95,6 +116,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
   } else {
     if (!existing) throw new Error(`No TOTP seed for ${upn}; run: totp.mjs ensure ${upn}`);
-    console.log(`${totp(existing.trim())} (${secondsLeft()} s left)`);
+    const { nowMs, skewSeconds } = await trueTime();
+    if (skewSeconds !== null && Math.abs(skewSeconds) > 5) {
+      console.error(`Note: this machine's clock is ${Math.abs(skewSeconds)} s ${skewSeconds > 0 ? 'fast' : 'slow'}; the code is for true time.`);
+    }
+    console.log(`${totp(existing.trim(), nowMs)} (${secondsLeft(nowMs)} s left)`);
   }
 }

@@ -16,7 +16,7 @@ Walks the operator through [SETUP.md](../../../SETUP.md) Phase 6b. Run from the 
 
 ### 1. Preconditions
 
-1. Phase 5a is done: the registry has **Cloud VM address** and the `cloud` tunnel is healthy.
+1. Phase 5a is done: the registry has **Cloud VM address** (`ubuntu@<ip>`; if a Phase 5a run predates that key, set it with `node scripts/lib/registry.mjs set "Cloud VM address" "ubuntu@<ip>"`, or `provision.mjs --apply` stops at the TOTP step after creating the users) and the `cloud` tunnel is healthy.
 2. Phase 6a is done: persona TOTP seeds exist (`node scripts/lib/totp.mjs code <any persona UPN>` prints a code).
 
 ### 2. Configuration and secrets
@@ -57,6 +57,8 @@ MFA note: the default flow's validation stage prompts for any configured device 
 ### 7. Verify an MFA sign-in (operator)
 
 In a private window, sign in at https://sso.<domain>/ as a persona (username = UPN, password from Passbolt `Personas` / `authentik: <upn>`), then enter the code from `node scripts/lib/totp.mjs code <upn>`.
+
+`totp.mjs code` corrects for a wrong local clock using Cloudflare's HTTP `Date` header and says so when the clock is off by more than 5 s. authentik tolerates only about one 30-second step of drift, so on a machine whose clock is a minute slow the uncorrected code is rejected as an "invalid token" (Entra was more forgiving). Set `VE_TOTP_LOCAL_CLOCK=1` to skip the correction. If codes still fail, compare `date -u` on the VM with true time.
 
 Done when the persona lands on the authentik user dashboard.
 
