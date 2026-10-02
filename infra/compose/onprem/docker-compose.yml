@@ -67,6 +67,49 @@ services:
       - splunk-var:/opt/splunk/var
       - ./splunk/apps/ve_indexes:/opt/splunk/etc/apps/ve_indexes
 
+  # Payroll (Phase 7b): legacy on-prem PostgreSQL, reached by the SUT through its gateway like SQL Server.
+  payroll-db:
+    image: postgres:${PAYROLL_POSTGRES_IMAGE_TAG:-16}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: payroll
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PAYROLL_PG_PASSWORD:?set in .env}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PAYROLL_PORT:-5432}:5432"
+    volumes:
+      - payroll-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payroll"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: runs every payroll/init/*.sql in name order once PostgreSQL is healthy. Scripts must be idempotent.
+  payroll-init:
+    image: postgres:${PAYROLL_POSTGRES_IMAGE_TAG:-16}
+    depends_on:
+      payroll-db:
+        condition: service_healthy
+    environment:
+      PGHOST: payroll-db
+      PGUSER: postgres
+      PGDATABASE: payroll
+      PGPASSWORD: ${PAYROLL_PG_PASSWORD:?set in .env}
+      PAYROLL_OWNER_PASSWORD: ${PAYROLL_OWNER_PASSWORD:?set in .env}
+      PAYROLL_READER_PASSWORD: ${PAYROLL_READER_PASSWORD:?set in .env}
+    volumes:
+      - ./payroll/init:/init:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for f in /init/*.sql; do
+          echo "Running $$f"
+          psql -v ON_ERROR_STOP=1 -v owner_pw="$$PAYROLL_OWNER_PASSWORD" -v reader_pw="$$PAYROLL_READER_PASSWORD" -f "$$f" || exit 1
+        done
+    restart: "no"
+
   # Optional: direct access through Cloudflare Tunnel (HTTP(S) services such as Splunk web/REST/HEC).
   # Route public hostnames to http://splunk:8000, https://splunk:8089 (noTLSVerify), https://splunk:8088 in the tunnel config.
   cloudflared:
@@ -81,3 +124,4 @@ volumes:
   sqlserver-data:
   splunk-etc:
   splunk-var:
+  payroll-db:

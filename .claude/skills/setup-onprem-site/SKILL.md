@@ -39,10 +39,11 @@ Record **On-prem host / network** and **On-prem `BIND_ADDR`**.
    - `node scripts/env/secret-env.mjs infra/compose/onprem/.env SUT_READER_PASSWORD "Service & API" "On-prem SQL Server: sut_reader" --username sut_reader`
    - `node scripts/env/secret-env.mjs infra/compose/onprem/.env SPLUNK_PASSWORD "Service & API" "On-prem Splunk: admin" --username admin`
    - `node scripts/env/secret-env.mjs infra/compose/onprem/.env SPLUNK_HEC_TOKEN "Service & API" "On-prem Splunk: HEC token" --kind guid`
+   - The stack also defines the payroll database (Phase 7b), so `compose up` needs its three secrets: run `/setup-payroll-db` step 2 now (the commands are idempotent).
 
    A "differ" error means the `.env` and the vault disagree. SQL Server and Splunk keep the password from their first start, so ask which one is live before resolving.
 
-Done when all four print `kept`, `vaulted`, `restored`, or `generated`.
+Done when every secret prints `kept`, `vaulted`, `restored`, or `generated`.
 
 ### 4. Deploy
 

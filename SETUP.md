@@ -232,11 +232,29 @@ Stack: `infra/compose/onprem/` (SQL Server 2022 Developer, Splunk Enterprise, op
 
 ## Phase 7: HR (Odoo Community + Payroll DB)
 
-- [ ] **[script]** Deploy Odoo Community + Postgres via Compose at `https://hr.<domain>` (verify arm64 image).
-- [ ] **[manual]** Create database, install apps: Employees, Time Off, Recruitment, Attendance, Expenses (Inventory/Purchase optional).
-- [ ] **[script]** Create the `payroll` schema in Postgres.
-- [ ] **[script]** Create an API user for loaders and SUT access; store it in `Service & API`.
-- **Record:** Odoo URL, DB name.
+Odoo (the HR system of record) runs on the cloud site and is reached over HTTPS through its API. The payroll database runs on the **on-prem** site: the tunnel carries HTTP(S) only, so a cloud database would be unreachable for the SUT, while on-prem it's reached through the SUT's gateway like SQL Server.
+
+### 7a. Odoo (cloud site)
+
+**Agent-assisted:** run the `/setup-odoo` skill.
+
+- [ ] **[script]** Secrets into `infra/compose/cloud/.env` via `secret-env.mjs` (`ODOO_DB_PASSWORD`, `ODOO_MASTER_PASSWORD`); copy the stack to the VM; `docker compose up -d` (Odoo 19 arm64 + PostgreSQL; database manager disabled, only database `hr`).
+- [ ] **[script]** Create database `hr` without demo data (`odoo -i base --stop-after-init`; the demo flag differs by version, so the skill checks `odoo --help`).
+- [ ] **[script]** Before publishing, replace the default `admin`/`admin` with the vaulted password: `node scripts/odoo/provision.mjs --bootstrap-admin` (over SSH).
+- [ ] **[script]** Publish `hr.<domain>` → `http://odoo:8069` on tunnel `cloud`; check `/web/health`.
+- [ ] **[script]** `node scripts/odoo/provision.mjs` (plan), then `--apply`: HR apps (Employees, Time Off, Recruitment, Attendance, Expenses, two-factor auth), company name, site addresses and work locations, departments with heads, job positions, the 25 persona employees (Badge ID = employee ID) with managers, the HR manager's Odoo user with the persona's TOTP seed, and the SUT API user `sut-odoo@svc.<domain>` (Employees Officer; Odoo has no read-only HR group). Inventory/Purchase stay optional.
+- [ ] **[manual]** Verify: sign in as the HR manager persona with password + code.
+- **Record:** Odoo URL, Odoo version.
+
+### 7b. Payroll database (on-prem site)
+
+**Agent-assisted:** run the `/setup-payroll-db` skill.
+
+- [ ] **[script]** Secrets into `infra/compose/onprem/.env` via `secret-env.mjs` (`PAYROLL_PG_PASSWORD`, `PAYROLL_OWNER_PASSWORD`, `PAYROLL_READER_PASSWORD`); `PAYROLL_PORT` if 5432 is taken.
+- [ ] **[script]** `docker compose up -d` on the on-prem host: PostgreSQL 16 database `payroll` on `BIND_ADDR:PAYROLL_PORT`. `payroll-init` creates schema `payroll` (`employees`, `compensation`, `pay_runs`, `payslips`), `payroll_owner` (loaders) and read-only `payroll_reader` (SUT).
+- [ ] **[script]** Smoke tests: tables exist, the reader can read, the reader can't write, the port is reachable where the gateway runs.
+- Data loads in Phase 10.
+- **Record:** payroll DB address.
 
 ## Phase 8: SIEM Ingestion
 
@@ -357,6 +375,8 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Okta org URL | | API token expires after 30 days unused |
 | Okta custom OTP factor profile | | |
 | Odoo URL | `https://hr.<domain>` | |
+| Odoo version | | |
+| Payroll DB | | |
 | Salesforce org | | |
 | HubSpot account | | |
 | QBO sandbox company | | |

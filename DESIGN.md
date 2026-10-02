@@ -69,7 +69,7 @@ Defined as data in `canonical/org/`; every system's users and groups derive from
 | Web hosting | **Cloudflare Workers static assets** | SaaS | Free | Static Next.js export; no server compute. |
 | Collaboration / files | **Microsoft 365 Developer Program E5 sandbox** | SaaS | Free (requires VS subscription or partner eligibility), 90-day renewable | SharePoint, OneDrive, Teams, Outlook, Excel. |
 | HR | **Odoo Community** | Cloud | Open source (LGPL) | Employees, departments, time off, recruitment, attendance, expenses. Payroll is Enterprise-only → see below. |
-| Payroll / comp | **PostgreSQL** (`payroll` schema) | Cloud | Open source | Sensitive dataset for permission tests. |
+| Payroll / comp | **PostgreSQL 16** (`payroll` database and schema) | **On-prem** | Open source | Sensitive dataset for permission tests; read-only `payroll_reader` for the SUT, reached through its gateway. |
 | Workforce identity (primary) | **authentik** | Cloud | Open source | SAML + OIDC SSO; built-in outbound SCIM provider. |
 | Workforce identity (secondary) | **Okta Developer org** | SaaS | Free | Commercial SCIM/SSO reference implementation. |
 | Workforce identity (tertiary) | **Entra ID** (M365 dev tenant) | SaaS | Included with E5 sandbox | E5 includes Entra ID P1/P2 → SCIM to custom apps. |
@@ -109,7 +109,7 @@ Shopify webhooks ──> Supabase Edge Function ──> orders mirror + GA4 Meas
 | | Cloud site | On-prem site ("HQ datacenter") |
 |---|---|---|
 | Purpose | Self-hosted apps a real company would expose to the internet | Legacy/internal systems behind the corporate firewall |
-| Services | authentik, Odoo, Postgres | SQL Server, Splunk Enterprise |
+| Services | authentik, Odoo (each with its own PostgreSQL) | SQL Server, Splunk Enterprise, payroll PostgreSQL |
 | Host | OCI Always Free Ampere A1 (arm64; 4 OCPU / 24 GB total; verify current limits) | Any x86_64 Docker host on a private network, e.g. a VM with no public IP (VS subscription Azure credits) or a physical/Hyper-V box |
 | Provisioning | Terraform (`infra/oci/`) + Compose (`infra/compose/cloud/`) | Compose (`infra/compose/onprem/`) |
 | Inbound | None, except optional SSH from `admin_cidrs` (operator IP) for deployments; services published via Cloudflare Tunnel | None |
@@ -187,6 +187,7 @@ scripts/              provisioning scripts, vault adapter
   m365/               Graph client, domain.mjs, cleanup.mjs, provision.mjs (org model → M365 sandbox), mfa.mjs
   authentik/          provision.mjs (org model → authentik; TOTP via ak shell)
   okta/               provision.mjs (org model subset → Okta)
+  odoo/               provision.mjs (org model → Odoo over JSON-RPC; admin bootstrap and TOTP via odoo shell)
 local/                gitignored: registry, operator notes
 .mcp.json             project MCP servers for agent-assisted setup (no secrets)
 .claude/skills/       agent skills that run SETUP.md phases (e.g. setup-prerequisites)
@@ -295,6 +296,8 @@ Entries are append-only; later entries supersede earlier ones.
 | 2026-09-24 | Phase 3 automated via `setup-email-routing` skill (Cloudflare MCP); delivery proven by test, with per-address rules as fallback | Unclear whether the zone catch-all covers subdomain addresses; sign-up addresses are known in advance, so literal rules always work. Generic "automation" Cloudflare API token dropped: tokens are created per purpose, least privilege, when a script needs one. |
 | 2026-09-24 | Org model as hand-authored YAML in `canonical/org/`: 9 departments, group catalog, 25 personas = 25 E5 licenses; ~375 generated employees | Defined before provisioning because every IdP, group, SCIM scope, and permission test derives from it. Each persona carries a test purpose, so coverage is deliberate. |
 | 2026-09-24 | Phase 4 automated via `setup-m365` skill; Graph work through `scripts/m365/` (domain, provision) as a sandbox-local app `ve-provisioning`, not the `m365` CLI | The CLI keeps one active connection per OS user, and `m365 setup` writes global config, so it could act on the operator's production tenant. A tenant-local app plus a token-tenant check makes wrong-tenant writes impossible. DNS goes through the Cloudflare MCP. Group-based E5 licensing on `app-m365`. `yaml` is the one npm dependency (local to `scripts/`). |
+| 2026-10-02 | Phase 7 split into `setup-odoo` (7a, cloud site) and `setup-payroll-db` (7b, on-prem site) | Payroll moves on-prem: the tunnel carries HTTP(S) only, so a cloud database would be unreachable for the SUT; on-prem it's reached through the gateway like SQL Server, a realistic legacy-payroll setup. Odoo is reached over HTTPS via its API. |
+| 2026-10-02 | Odoo Community 19.0 (arm64), database `hr` only with the database manager disabled; admin password replaced over SSH before `hr.<domain>` is published; persona-linked Odoo users get the shared TOTP seed (auth_totp) | 19.0 has a year of fixes (20.0 just shipped). A fresh database's `admin`/`admin` must never be reachable publicly. TOTP keeps the MFA policy consistent. The SUT API user is an Employees Officer because Community has no read-only HR group. |
 | 2026-09-25 | Persona MFA: enforced everywhere, with one vault TOTP seed per persona (`Personas` / `TOTP: <upn>`) shared by Entra, authentik, and Okta and registered by script | Realistic MFA-protected sign-ins that stay automatable (tests compute the code). Entra: seed uploaded as a hardware OATH token via Graph beta (assign + activate with a computed code); Conditional Access replaces security defaults, excluding Global Administrators (break-glass). authentik: TOTP devices created via `ak shell` (its API can't set a key). Okta: Custom OTP authenticator accepts the seed. Rejected: CA exemption (unrealistic; admin-portal MFA is mandatory anyway) and manual enrollment (~75 enrollments). |
 | 2026-09-25 | Phase 6 split into three skills: `setup-entra-mfa` (6a, also finishes Phase 4's deferred ops@ routing and DMARC), `setup-authentik` (6b), `setup-okta` (6c) | Each IdP is a separate system with its own manual steps; 6a creates the seeds the others reuse. |
 | 2026-09-25 | Okta holds a 10-persona subset (`idp_subsets.okta` in `personas.yaml`) | The Integrator Free Plan allows 10 active users. The subset covers executives, sales incl. the mover, a SCIM negative case, payroll, the leaver, and IT/security. |

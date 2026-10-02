@@ -4,7 +4,7 @@
 #
 #   Phase 5a: cloudflared
 #   Phase 6b: authentik (sso.<domain> -> http://authentik-server:9000)
-#   Phase 7:  Odoo (hr.<domain>)
+#   Phase 7a: Odoo (hr.<domain> -> http://odoo:8069)
 #
 #   cp .env.example .env    # values synced from the vault (SETUP.md)
 #   docker compose up -d
@@ -68,8 +68,49 @@ services:
       authentik-postgresql:
         condition: service_healthy
 
+  # --- Odoo Community (HR system of record). Database "hr" only; the database manager is disabled. ----------
+  odoo-db:
+    image: postgres:${ODOO_POSTGRES_IMAGE_TAG:-16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: ${ODOO_DB_PASSWORD:?set in .env}
+    volumes:
+      - odoo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  odoo:
+    image: odoo:${ODOO_IMAGE_TAG:-19.0}
+    restart: unless-stopped
+    depends_on:
+      odoo-db:
+        condition: service_healthy
+    environment:
+      HOST: odoo-db
+      USER: odoo
+      PASSWORD: ${ODOO_DB_PASSWORD:?set in .env}
+      ODOO_RC: /tmp/odoo.conf
+      ODOO_MASTER_PASSWORD: ${ODOO_MASTER_PASSWORD:?set in .env}
+    # The master password lives only in a config file, so write it from the environment at start, then hand off
+    # to the image's entrypoint (which adds the database connection arguments).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        printf '[options]\nadmin_passwd = %s\n' "$$ODOO_MASTER_PASSWORD" > /tmp/odoo.conf
+        exec /entrypoint.sh odoo --proxy-mode --no-database-list --db-filter='^hr$$'
+    volumes:
+      - odoo-data:/var/lib/odoo
+
 volumes:
   authentik-db:
   authentik-data:
   authentik-media:
   authentik-templates:
+  odoo-db:
+  odoo-data:
