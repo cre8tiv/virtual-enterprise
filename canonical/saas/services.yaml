@@ -1,0 +1,128 @@
+# SaaS service catalog: the single source for each service's sign-up, credentials, registry keys, and gotchas.
+# Read by the /setup-saas skill (the walkthrough) and scripts/saas/verify.mjs (the credential check).
+#
+# admin_email:  local part on svc.<domain>; the vendor admin account (Passbolt "Vendor admins" / "<name> admin")
+# credentials:  Passbolt "Service & API" resources the scripts use; `fields` says what goes in username/password
+# registry:     local/registry.md keys to record (value format in parentheses)
+# lifecycle:    expiry, hibernation, or limits that need a reminder
+# needed_by:    the phase that first uses the service; signing up much earlier only starts trial clocks
+# console:      where to create the API credential after signing up
+
+services:
+  - key: salesforce
+    name: Salesforce
+    edition: Developer Edition (free, no expiry while used)
+    signup_url: https://developer.salesforce.com/signup
+    admin_email: salesforce-admin
+    needed_by: 10
+    credentials:
+      - vault: "Salesforce: API client"
+        fields: { username: consumer key, password: consumer secret }
+    registry: { "Salesforce org": "My Domain URL, e.g. https://<name>-dev-ed.develop.my.salesforce.com" }
+    lifecycle: Developer Edition orgs unused for a long period can be locked; sign in at least monthly.
+    gotchas:
+      - The username must be globally unique and email-shaped; use the admin email itself.
+      - UI sign-in requires MFA; register an authenticator and save its secret in the Passbolt admin item's TOTP field.
+    console: >-
+      Setup → External Client App Manager → New External Client App (orgs where new Connected Apps are disabled; otherwise
+      App Manager → New Connected App): enable OAuth, callback https://login.salesforce.com/services/oauth2/success,
+      scopes "Manage user data via APIs (api)" and "Perform requests at any time (refresh_token, offline_access)",
+      enable **Client Credentials Flow**. In the app's policies set the **Run As** user to the admin. Copy the consumer
+      key and secret.
+
+  - key: hubspot
+    name: HubSpot
+    edition: Free CRM account (no expiry)
+    signup_url: https://app.hubspot.com/signup-hubspot/crm
+    admin_email: hubspot-admin
+    needed_by: 10
+    credentials:
+      - vault: "HubSpot: private app token"
+        fields: { username: account ID, password: access token }
+    registry: { "HubSpot account": "account (portal) ID" }
+    lifecycle: none
+    gotchas:
+      - Use a free CRM account, not a developer test account; test accounts expire after 90 days.
+    console: >-
+      Settings → Integrations → Private Apps → Create a private app "ve-loader": scopes crm.objects.contacts,
+      crm.objects.companies, crm.objects.deals (read and write), crm.schemas.*.read. Create, then show and copy the
+      access token.
+
+  - key: quickbooks
+    name: QuickBooks Online
+    edition: Intuit Developer sandbox company (US; valid 2 years, renewable)
+    signup_url: https://developer.intuit.com/
+    admin_email: qbo-admin
+    needed_by: 10
+    credentials:
+      - vault: "QuickBooks: OAuth app"
+        fields: { username: client ID, password: client secret }
+      - vault: "QuickBooks: refresh token"
+        fields: { username: realm (company) ID, password: refresh token }
+    registry: { "QBO sandbox company": "realm ID" }
+    lifecycle: >-
+      Sandbox company expires after 2 years. The refresh token lasts 100 days and Intuit may issue a new one on each
+      use; scripts/saas/verify.mjs saves the newest automatically, so run it at least every 100 days.
+    gotchas:
+      - No client-credentials flow; the first refresh token comes from Intuit's OAuth 2.0 Playground.
+      - Keep the app in Development (sandbox) keys; production keys need an app review.
+    console: >-
+      Intuit Developer → Dashboard → Create an app → QuickBooks Online and Payments, scope com.intuit.quickbooks.accounting
+      → Keys & credentials (Development) → copy client ID and secret. Then OAuth 2.0 Playground
+      (https://developer.intuit.com/app/developer/playground): select the app, scope accounting, Get authorization code
+      → choose the sandbox company → Get tokens → copy the **refresh token** and the **realm ID**.
+
+  - key: servicenow
+    name: ServiceNow
+    edition: Personal Developer Instance (free)
+    signup_url: https://developer.servicenow.com/
+    admin_email: servicenow-admin
+    needed_by: 10
+    credentials:
+      - vault: "ServiceNow: integration user"
+        fields: { username: ve.integration, password: its password }
+    registry: { "ServiceNow PDI": "instance URL, e.g. https://dev12345.service-now.com" }
+    lifecycle: >-
+      The instance hibernates after hours without use (wake it from the developer portal) and is reclaimed after about
+      10 days without activity; reclaimed means a new instance and re-provisioning. Sign up close to Phase 10.
+    gotchas:
+      - The admin password is shown once when the instance is assigned; save it straight into Passbolt.
+    console: >-
+      In the instance as admin: User Administration → Users → New: user ID ve.integration, "Web service access only",
+      set a password (generate it in Passbolt). Roles: itil, plus snc_platform_rest_api_access if the instance has it.
+
+  - key: jira
+    name: Jira Cloud
+    edition: Free plan (up to 10 users)
+    signup_url: https://www.atlassian.com/software/jira/free
+    admin_email: jira-admin
+    needed_by: 10
+    credentials:
+      - vault: "Jira: API token"
+        fields: { username: admin email, password: API token }
+    registry: { "Jira site": "site URL, e.g. https://<company>.atlassian.net" }
+    lifecycle: API tokens expire (one year by default); the free plan has 10 users.
+    gotchas:
+      - The site name is permanent; derive it from the company name.
+    console: >-
+      Signed in as the admin: https://id.atlassian.com/manage-profile/security/api-tokens → Create API token "ve-loader"
+      (longest expiry offered).
+
+  - key: github
+    name: GitHub
+    edition: Free organization
+    signup_url: https://github.com/signup
+    admin_email: github-admin
+    needed_by: 10
+    credentials:
+      - vault: "GitHub: org token"
+        fields: { username: GitHub username, password: fine-grained personal access token }
+    registry: { "GitHub org": "organization name" }
+    lifecycle: Fine-grained tokens expire (maximum one year).
+    gotchas:
+      - Create a dedicated GitHub user with the admin email, not a personal account, then the organization (Free plan).
+      - GitHub requires 2FA; register an authenticator and save its secret in the Passbolt admin item's TOTP field.
+    console: >-
+      Settings → Developer settings → Fine-grained tokens → Generate: resource owner = the organization, repository
+      access = all, permissions Contents, Issues, Pull requests (read and write), Metadata (read); organization
+      Members (read). Copy the token.

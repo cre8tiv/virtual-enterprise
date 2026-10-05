@@ -159,6 +159,7 @@ A real domain owned by the operator is required: IdP federation and SSO routing 
 ```
 canonical/            master dataset: single source of truth
   org/                sites, departments, groups, 25 personas (hand-authored YAML; §2.1)
+  saas/               services.yaml: SaaS catalog (sign-up, credentials, registry keys, lifecycle, gotchas)
   generator/          seeded, deterministic entity generation
   schema/             master entities + cross-system ID map
 loaders/              one per target system; push canonical data via vendor APIs
@@ -189,6 +190,7 @@ scripts/              provisioning scripts, vault adapter
   okta/               provision.mjs (org model subset → Okta)
   odoo/               provision.mjs (org model → Odoo over JSON-RPC; admin bootstrap and TOTP via odoo shell)
   siem/               collect.mjs (Entra, authentik, Okta, Cloudflare logs → Splunk HEC, checkpointed)
+  saas/               verify.mjs (one read-only call per SaaS credential; reads canonical/saas/services.yaml)
 local/                gitignored: registry, operator notes
 .mcp.json             project MCP servers for agent-assisted setup (no secrets)
 .claude/skills/       agent skills that run SETUP.md phases (e.g. setup-prerequisites)
@@ -297,6 +299,7 @@ Entries are append-only; later entries supersede earlier ones.
 | 2026-09-24 | Phase 3 automated via `setup-email-routing` skill (Cloudflare MCP); delivery proven by test, with per-address rules as fallback | Unclear whether the zone catch-all covers subdomain addresses; sign-up addresses are known in advance, so literal rules always work. Generic "automation" Cloudflare API token dropped: tokens are created per purpose, least privilege, when a script needs one. |
 | 2026-09-24 | Org model as hand-authored YAML in `canonical/org/`: 9 departments, group catalog, 25 personas = 25 E5 licenses; ~375 generated employees | Defined before provisioning because every IdP, group, SCIM scope, and permission test derives from it. Each persona carries a test purpose, so coverage is deliberate. |
 | 2026-09-24 | Phase 4 automated via `setup-m365` skill; Graph work through `scripts/m365/` (domain, provision) as a sandbox-local app `ve-provisioning`, not the `m365` CLI | The CLI keeps one active connection per OS user, and `m365 setup` writes global config, so it could act on the operator's production tenant. A tenant-local app plus a token-tenant check makes wrong-tenant writes impossible. DNS goes through the Cloudflare MCP. Group-based E5 licensing on `app-m365`. `yaml` is the one npm dependency (local to `scripts/`). |
+| 2026-10-05 | Phase 9 via `setup-saas`: operator signs up and creates credentials (straight into Passbolt); a catalog (`canonical/saas/services.yaml`) drives the walkthrough and `scripts/saas/verify.mjs` proves each credential with one read-only call. Core set first (Salesforce, HubSpot, QBO, ServiceNow, Jira, GitHub); storefront services and Snowflake join the catalog near their phase | Vendors forbid automated sign-up, but the surrounding steps (routing, naming, registry, verification) are where mistakes happen. One catalog entry per service is the single place to update when a vendor changes its flow. Just-in-time sign-up keeps trial and hibernation clocks from running out before use. HubSpot uses a free CRM account because developer test accounts expire in 90 days. |
 | 2026-10-05 | Phase 8 via `setup-siem-ingestion`: container logs through Docker's `splunk` logging driver (compose override enabled by `COMPOSE_FILE` in `.env`); audit/sign-in logs through a checkpointed pull collector (`scripts/siem/collect.mjs`) | No agents or extra containers. The override keeps stacks working before Phase 8 and can be switched off by `.env`. Checkpoints with same-instant dedupe make re-runs safe. |
 | 2026-10-05 | HEC published at `https://hec.<domain>` on the `onprem` tunnel and used by both sites | The cloud VM has no other path to on-prem Splunk; Docker daemons can't reliably reach a host-published port everywhere (Docker Desktop). HEC requires its token on every request; Splunk web stays behind Cloudflare Access. |
 | 2026-10-05 | OCI audit logs deferred | Pulling them needs OCI request signing (SDK or CLI), neither of which is a prerequisite. |

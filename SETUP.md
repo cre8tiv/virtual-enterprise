@@ -272,21 +272,28 @@ Splunk is deployed in Phase 5b. The cloud VM can reach the on-prem Splunk only t
 
 ## Phase 9: SaaS Accounts
 
-Sign up each with `<system>-admin@svc.<domain>`; store the login in `Vendor admins` and API credentials in `Service & API`.
+**Agent-assisted:** run the `/setup-saas` skill. It goes one service at a time from the catalog [`canonical/saas/services.yaml`](canonical/saas/services.yaml) (sign-up URL, edition, admin address, credential names, registry keys, lifecycle, gotchas, console path) and proves each credential with `node scripts/saas/verify.mjs <service>`.
 
-- [ ] **[manual]** Salesforce Developer Edition
-- [ ] **[manual]** HubSpot developer test account
-- [ ] **[manual]** QuickBooks Online sandbox (Intuit Developer) *(or ERPNext)*
-- [ ] **[manual]** Shopify Partner account + dev store; create a Storefront API access token (headless channel) and Admin API app
-- [ ] **[manual]** Stripe account (test mode)
-- [ ] **[manual]** ServiceNow Personal Developer Instance
-- [ ] **[manual]** Jira Cloud (free) + GitHub organization
-- [ ] **[manual]** Snowflake trial
-- [ ] **[manual]** Google account (`ga-admin@svc.<domain>`) → GA4 property + web data stream for `www.<domain>`; create a Measurement Protocol API secret
-- [ ] **[manual]** Supabase account/org + project (region near the OCI home region)
-- [ ] **[manual]** Cloudflare Workers (free plan) on the Phase 1 account; create an API token for `wrangler` (Workers Scripts:Edit, Workers Routes:Edit) and store it in `Service & API`
-- [ ] Note expirations (PDI hibernation, Snowflake trial end, Supabase inactivity pause).
-- **Record:** instance URLs, org/project IDs, GA4 measurement ID, expiry dates.
+Each service: sign up with `<service>-admin@svc.<domain>` (**[manual]**; vendors forbid automated sign-up), store the admin login in `Vendor admins` (authenticator secrets in the item's TOTP field) and the API credential in `Service & API` under the catalog's name (**[manual]**), record registry values, then **[script]** verify. Sign up close to the phase that needs a service: trial clocks and hibernation start at sign-up.
+
+**Core set (in the catalog):**
+
+- [ ] Salesforce Developer Edition: External Client App (or Connected App) with Client Credentials Flow
+- [ ] HubSpot free CRM account (not a developer test account, which expires in 90 days): private app token
+- [ ] QuickBooks Online sandbox (Intuit Developer): OAuth app + refresh token from the OAuth Playground (the refresh token rotates; `verify.mjs` saves the newest)
+- [ ] ServiceNow Personal Developer Instance: `ve.integration` web-service user (hibernates; reclaimed after ~10 idle days)
+- [ ] Jira Cloud free: API token
+- [ ] GitHub organization (dedicated user): fine-grained token
+
+**Added to the catalog when their phase approaches:**
+
+- [ ] Snowflake trial (Phase 10; 30-day trial)
+- [ ] Shopify Partner account + dev store; Storefront API token (headless channel) and Admin API app (Phase 11)
+- [ ] Stripe account, test mode (Phase 11)
+- [ ] Google account (`ga-admin@svc.<domain>`) → GA4 property + web data stream for `www.<domain>`; Measurement Protocol API secret (Phase 11)
+- [ ] Supabase account/org + project, region near the OCI home region (Phase 11)
+- [ ] Cloudflare Workers (free plan) on the Phase 1 account; `wrangler` API token (Workers Scripts:Edit, Workers Routes:Edit) (Phase 11)
+- **Record:** per the catalog's registry keys, with expiry/hibernation dates in the Renewal column.
 
 ## Phase 10: Canonical Data & Loaders
 
@@ -393,7 +400,8 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | Shopify dev store | | |
 | Stripe account | | |
 | ServiceNow PDI | | Hibernation |
-| Jira site | | |
+| Jira site | | API token expiry |
+| GitHub org | | Token expiry |
 | Snowflake account | | Trial |
 | GA4 property / measurement ID | | |
 | Supabase project | | Inactivity pause |
