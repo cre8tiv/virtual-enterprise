@@ -1,0 +1,35 @@
+# Phase 8 override: ship every cloud-site container's logs to Splunk (index "app") through the HEC endpoint
+# published on the on-prem tunnel (https://hec.<domain>). Enabled by .env:
+#   COMPOSE_PATH_SEPARATOR=,
+#   COMPOSE_FILE=docker-compose.yml,docker-compose.logging.yml
+# Docker keeps a local copy (dual logging), so `docker compose logs` still works. Non-blocking: if Splunk is
+# unreachable, logs are buffered and then dropped; containers never stall on logging.
+
+x-splunk-logging: &splunk-logging
+  driver: splunk
+  options:
+    splunk-url: ${SPLUNK_HEC_URL:?set in .env, e.g. https://hec.example.com}
+    splunk-token: ${SPLUNK_HEC_TOKEN:?set in .env}
+    splunk-index: app
+    splunk-source: cloud-site
+    splunk-sourcetype: docker:container
+    splunk-format: json
+    splunk-gzip: "true"
+    splunk-verify-connection: "false"
+    tag: "{{.Name}}"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+  cloudflared:
+    logging: *splunk-logging
+  authentik-postgresql:
+    logging: *splunk-logging
+  authentik-server:
+    logging: *splunk-logging
+  authentik-worker:
+    logging: *splunk-logging
+  odoo-db:
+    logging: *splunk-logging
+  odoo:
+    logging: *splunk-logging

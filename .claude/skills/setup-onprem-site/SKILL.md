@@ -73,9 +73,9 @@ Done when all four checks pass.
 3. Apply it: `compose cp <license path> splunk:/tmp/splunk-dev.lic`, then `compose exec -T -u splunk splunk /opt/splunk/bin/splunk add licenses /tmp/splunk-dev.lic -auth "admin:<password>"`, then `compose restart splunk` and wait for healthy.
 4. Re-check the licenses endpoint and record the expiry in the Renewal column of **Splunk version**.
 
-### 7. Optional: direct access through Cloudflare Tunnel
+### 7. Cloudflare Tunnel for Splunk (HEC required from Phase 8)
 
-Only if the operator wants Splunk reachable without the SUT's gateway (SQL Server stays gateway-only: raw TCP through a tunnel needs `cloudflared` on the client).
+The `hec.` route is required once Phase 8 ships logs (the cloud VM reaches Splunk only this way). `siem.` and `siem-api.` are optional: use them if the operator wants Splunk reachable without the SUT's gateway. SQL Server and payroll stay gateway-only: raw TCP through a tunnel needs `cloudflared` on the client.
 
 1. The operator creates tunnel `onprem` in Zero Trust (as in Phase 5a) and pastes its token into `infra/compose/onprem/.env` as `CLOUDFLARE_TUNNEL_TOKEN`. Sync it: `secret-env.mjs ... CLOUDFLARE_TUNNEL_TOKEN "Service & API" "Cloudflare tunnel: onprem"` (copy `.env` to the remote host again if remote).
 2. `compose --profile tunnel up -d`.

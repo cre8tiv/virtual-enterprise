@@ -258,10 +258,17 @@ Odoo (the HR system of record) runs on the cloud site and is reached over HTTPS 
 
 ## Phase 8: SIEM Ingestion
 
-Splunk is deployed in Phase 5b.
+**Agent-assisted:** run the `/setup-siem-ingestion` skill.
 
-- [ ] **[script]** Forward logs to Splunk HEC: Cloudflare audit logs (`cloudflare`), OCI audit + cloud-site app logs (`app`), IdP sign-ins (`idp`), on-prem host/Docker logs (`onprem`).
-- **Record:** HEC sources.
+Splunk is deployed in Phase 5b. The cloud VM can reach the on-prem Splunk only through the tunnel, so its event collector is published at `https://hec.<domain>` (HEC token required on every request), and both sites use that one URL.
+
+- [ ] **[script]** Publish `hec.<domain>` → `https://splunk:8088` on tunnel `onprem` (Phase 5b step 7, now required); record **Splunk HEC URL**.
+- [ ] **[script]** Container logs from both sites: set `SPLUNK_HEC_URL` and `COMPOSE_FILE=docker-compose.yml,docker-compose.logging.yml` (with `COMPOSE_PATH_SEPARATOR=,`) in each `.env`, then `docker compose up -d`. The override switches services to Docker's `splunk` logging driver (non-blocking; `docker compose logs` still works): cloud → index `app`, on-prem → `onprem` (Splunk and cloudflared excluded).
+- [ ] **[manual]** Collector credentials: Graph `AuditLog.Read.All` on `ve-provisioning`; Cloudflare API token `siem-collector` (Account Settings Read, Access: Audit Logs Read) into Passbolt `Service & API`. authentik and Okta reuse their Phase 6 tokens.
+- [ ] **[script]** `node scripts/siem/collect.mjs` (`--dry-run` first): Entra sign-ins/audits, authentik events, Okta System Log → `idp`; Cloudflare account audit and Access logs → `cloudflare`. Checkpointed in `local/state/`, so re-runs send only new events.
+- [ ] **[script]** Verify with a `tstats` search per index and sourcetype.
+- Deferred: OCI audit logs (need OCI request signing), `network` (simulator, Phase 13), `sut_audit` (Phase 12). Collector scheduling comes with the simulator (Phase 13).
+- **Record:** Splunk HEC URL, SIEM sources, SIEM collector last run.
 
 ## Phase 9: SaaS Accounts
 
@@ -368,6 +375,9 @@ Copy to `local/registry.md` (gitignored). Non-secret values only; secrets live i
 | SQL Server version | | |
 | Splunk version | | Dev license |
 | Splunk URL (if tunneled) | `https://siem.<domain>` | |
+| Splunk HEC URL | `https://hec.<domain>` | |
+| SIEM sources | | |
+| SIEM collector last run | | |
 | SUT gateway host | | |
 | Entra MFA | | |
 | authentik URL | `https://sso.<domain>` | |

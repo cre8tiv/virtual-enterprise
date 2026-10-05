@@ -1,0 +1,31 @@
+# Phase 8 override: ship on-prem container logs to Splunk (index "onprem") through https://hec.<domain>, the
+# same endpoint the cloud site uses (the Docker daemon can't reliably reach the published HEC port on every host,
+# e.g. Docker Desktop). Splunk and cloudflared keep local logging so Splunk never ingests its own output and
+# logging never depends on the tunnel it feeds. Enabled by .env:
+#   COMPOSE_PATH_SEPARATOR=,
+#   COMPOSE_FILE=docker-compose.yml,docker-compose.logging.yml
+
+x-splunk-logging: &splunk-logging
+  driver: splunk
+  options:
+    splunk-url: ${SPLUNK_HEC_URL:?set in .env, e.g. https://hec.example.com}
+    splunk-token: ${SPLUNK_HEC_TOKEN:?set in .env}
+    splunk-index: onprem
+    splunk-source: onprem-site
+    splunk-sourcetype: docker:container
+    splunk-format: json
+    splunk-gzip: "true"
+    splunk-verify-connection: "false"
+    tag: "{{.Name}}"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+  sqlserver:
+    logging: *splunk-logging
+  sqlserver-init:
+    logging: *splunk-logging
+  payroll-db:
+    logging: *splunk-logging
+  payroll-init:
+    logging: *splunk-logging
